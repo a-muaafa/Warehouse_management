@@ -1,58 +1,166 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
-
 <p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
+  <h1 align="center">نظام إدارة المستودعات والمخزون | Warehouse Management System (WMS)</h1>
+  <p align="center">
+    نظام إلكتروني متكامل ومتطور لإدارة المستودعات، تتبع الشحنات والتشغيلات، عمليات الجرد، والنقل بين المخازن مع دعم كامل للغة العربية والماسح الضوئي.
+  </p>
 </p>
 
-## About Laravel
+<p align="center">
+  <img src="https://img.shields.io/badge/Laravel-13.x-FF2D20?style=for-the-badge&logo=laravel&logoColor=white" alt="Laravel 13" />
+  <img src="https://img.shields.io/badge/PHP-8.3%2B-777BB4?style=for-the-badge&logo=php&logoColor=white" alt="PHP 8.3+" />
+  <img src="https://img.shields.io/badge/TailwindCSS-Custom_CSS-38BDF8?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="TailwindCSS" />
+  <img src="https://img.shields.io/badge/Language-Arabic_RTL-green?style=for-the-badge" alt="Arabic RTL" />
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" />
+</p>
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+---
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## نبذة عن المشروع
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+**نظام إدارة المستودعات (WMS)** هو تطبيق ويب حديث مخصص للمؤسسات والشركات لتسهيل متابعة المخزون بدقة عالية وتقليل الأخطاء البشرية. يوفر النظام حلولاً شاملة تبتدئ من تسليم البضائع الواردة، تتبع التشغيلات (Batches) وتواريخ الصلاحية، إدارة عمليات النقل بين عدة مستودعات، وصولاً إلى طباعة ملصقات الباركود والجرد الدوري التلقائي.
 
-## Learning Laravel
+---
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## المميزات الرئيسية
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+### 1. إدارة المستودعات المتعددة (Multi-Warehouse)
+- إضافة وإدارة مستودعات متعددة وتحديد السعة الاستيعابية والموقع الجغرافي.
+- متابعة الرصيد الفعلي المتاح والمحجوز لكل مستودع بشكل منفصل.
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+### 2. التحويلات والنقل بين المستودعات (Inter-Warehouse Transfers)
+- دورة عمل كاملة تشمل: طلب النقل -> الشحن والتصدير (Dispatch) -> التأكيد والاستلام (Receive).
+- تتبع حالة الشحنات وتسجيل الكميات المستلمة والمفقودة تلقائياً.
 
-## Agentic Development
+### 3. إدارة الأصناف والتشغيلات (Items & Batches)
+- إدارة الأصناف بالتفصيل (الوحدات، التصنيفات، الحد الأدنى لإعادة الطلب).
+- تتبع رقم الدفعة/التشغيلة (Batch Number) وتاريخ الانتهاء (Expiry Date).
+- **نظام الحجر الصحي (Quarantine):** إمكانية إيقاف التشغيلات المنتهية أو التالفة مؤقتاً لتجنب صرفها.
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+### 4. إدارة الحركات المخزنية (Transactions)
+- تسجيل عمليات **الوارد (Inbound)**، **الصادر (Outbound)**، **المرتجع (Returns)**، و**التالف (Damaged)**.
+- توثيق بيانات الموردين (Suppliers) والعملاء (Customers) المرتبطين بكل حركة.
+
+### 5. الجرد وتدقيق المخزون (Inventory Audits & Reconciliation)
+- إنتاج أوامر جرد دوري مفاجئ أو مجدول.
+- إدخال الكميات الفعلية ومقارنتها بالرصيد الدفتري للنظام.
+- تسوية الفروقات (Reconciliation) مع تعديل المخزون بضغطة زر وتوثيق الفروق.
+
+### 6. الماسح الضوئي وطباعة الملصقات (Scanner & Barcode Printing)
+- واجهة مخصصة للأجهزة المحمولة والماسح الضوئي (Handheld Barcode Scanner) للبحث السريع عن الأصناف.
+- توليد وطباعة ملصقات الباركود والـ QR Code للأصناف بشكل مباشر.
+
+### 7. التقارير والتقييم والـ API
+- حساب تقييم المخزون (Inventory Valuation) وتكلفة الاحتفاظ بالبضاعة (Holding Costs).
+- تصدير التقارير بصيغة **Excel** و **PDF**.
+- **RESTful API** جاهز للتكامل مع أنظمة ERP المحاسبية وتطبيقات الجوال الخارجية.
+
+---
+
+## نظام الأدوار والصلاحيات (RBAC)
+
+يحتوي النظام على 5 مستويات من الصلاحيات لضمان أمان البيانات:
+
+| الدور (Role) | الصلاحيات والمهام |
+| :--- | :--- |
+| **مدير النظام (Admin)** | التحكم الكامل، إدارة الأقسام، المشرفين، واستعراض سجلات النظام (System Logs). |
+| **مدير المستودعات (Warehouse Manager)** | إدارة المستودعات، الموردين، العملاء، والتحويلات المخزنية. |
+| **مشرف المخزون (Supervisor)** | إضافة الأصناف، إدارة العمال، إنشاء تقارير التقييم والجرد وتصدير البيانات. |
+| **أمين المخزن / العامل (Worker)** | تسجيل الحركات المخزنية، استخدام الماسح الضوئي، وطباعة باركود المنتجات. |
+| **مدقق الجرد (Auditor)** | استعراض التقرير ومتابعة عمليات الجرد وتسوية الفروقات. |
+
+---
+
+## التقنيات المستخدمة
+
+- **الخلفية (Backend):** PHP 8.3+ / Laravel 13.x
+- **الواجهة الأمامية (Frontend):** Blade Templates / Custom CSS / JavaScript (ES6) / Vite
+- **قاعدة البيانات (Database):** MySQL / PostgreSQL / SQLite
+- **أدوات التطوير والجودة:** Laravel Boost, Laravel Pint, PHPUnit
+
+---
+
+## طريقة التثبيت والتشغيل المحلي
+
+### 1. المتطلبات الأساسية
+- **PHP** >= 8.3
+- **Composer** >= 2.x
+- **Node.js** >= 18.x & NPM
+
+### 2. خطوات التثبيت
 
 ```bash
-composer require laravel/boost --dev
+# 1. استنساخ المستودع
+git clone https://github.com/USERNAME/Warehouse_management.git
+cd Warehouse_management
 
-php artisan boost:install
+# 2. تثبيت اعتمادات PHP و Node
+composer install
+npm install
+
+# 3. إنشاء ملف البيئة وتوليد المفتاح
+cp .env.example .env
+php artisan key:generate
+
+# 4. تهيئة قاعدة البيانات وتشغيل التهجيرات والبيانات الأولية
+php artisan migrate --seed
+
+# 5. تجميع ملفات الواجهة الأمامية
+npm run build
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+### 3. تشغيل خادم التطوير
 
-## Contributing
+يمكنك تشغيل الخادم المحلي وأمر تطوير الموارد بأمر واحد:
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```bash
+composer run dev
+```
+أو عبر Artisan مباشرة:
+```bash
+php artisan serve
+```
 
-## Code of Conduct
+افتح المتصفح وزر الرابط: `http://localhost:8000`
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+---
 
-## Security Vulnerabilities
+## بيانات الدخول الافتراضية للتجربة (Seeders)
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+عند تشغيل `php artisan db:seed` يتم إنشاء الحسابات التوضيحية التالية (كلمة المرور لجميع الحسابات هي: `password`):
 
-## License
+- **مدير النظام (Admin):** `admin@warehouse.local`
+- **مشرف المخزون (Supervisor):** `supervisor@warehouse.local`
+- **أمين المستودع (Worker):** `worker@warehouse.local`
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+## واجهة برمجة التطبيقات (REST API)
+
+يوفر النظام نقاط نهاية (Endpoints) للتكامل الخارجي عبر المسار `/api/v1/`:
+
+- `GET /api/v1/stock-balances` - الاستعلام عن أرصدة المخزون الحالية.
+- `GET /api/v1/items/barcode/{code}` - البحث عن صنف بواسطة الباركود.
+- `GET /api/v1/valuation-summary` - ملخص تقييم القيمة المالية للمخزون.
+- `POST /api/v1/transactions/external-sync` - مزامنة الحركات من أنظمة خارجية.
+
+---
+
+## الاختبارات والجودة (Testing & Linting)
+
+لتشغيل اختبارات الوحدة واختبارات الميزات (Unit & Feature Tests):
+
+```bash
+php artisan test
+```
+
+لتنسيق الكود وفق معايير Laravel Pint:
+
+```bash
+vendor/bin/pint
+```
+
+---
+
+## الترخيص (License)
+
+هذا المشروع مرخص بموجب رخصة **[MIT License](LICENSE)**.
