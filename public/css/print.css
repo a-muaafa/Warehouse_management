@@ -1,0 +1,199 @@
+/* ===== WMS Pro — Advanced Multi-Format Print CSS ===== */
+
+@page {
+    margin: 4mm;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', 'Cairo', Arial, sans-serif;
+    background: #f4f6fa;
+    color: #111;
+}
+
+.print-page-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+}
+
+.labels-sheet-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8mm;
+    justify-content: center;
+    background: #fff;
+    padding: 10mm;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+/* Template 1: Shelf Label (100x50mm) */
+.label-shelf {
+    width: 90mm;
+    height: 48mm;
+    border: 1px dashed #ccc;
+    padding: 3mm 4mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background: #fff;
+    page-break-inside: avoid;
+}
+
+.label-shelf-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 2mm;
+}
+
+.label-title {
+    font-size: 11pt;
+    font-weight: 800;
+    line-height: 1.2;
+    max-width: 60mm;
+}
+
+.label-price-box {
+    text-align: right;
+}
+
+.label-price-val {
+    font-size: 14pt;
+    font-weight: 900;
+    color: #000;
+}
+
+.label-shelf-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 2mm 0;
+}
+
+.label-barcode-area {
+    flex-grow: 1;
+    text-align: center;
+}
+
+.label-barcode-area svg {
+    max-width: 55mm;
+    height: 18mm;
+}
+
+.label-qr-area {
+    width: 22mm;
+    height: 22mm;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.label-shelf-footer {
+    display: flex;
+    justify-content: space-between;
+    font-size: 7pt;
+    color: #444;
+    border-top: 1px solid #ddd;
+    padding-top: 1.5mm;
+}
+
+/* Template 2: Product Tag (50x30mm) */
+.label-tag {
+    width: 50mm;
+    height: 30mm;
+    border: 1px dashed #ccc;
+    padding: 2mm 3mm;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1mm;
+    background: #fff;
+    page-break-inside: avoid;
+}
+
+.label-tag .label-name {
+    font-size: 7.5pt;
+    font-weight: bold;
+    text-align: center;
+    max-width: 44mm;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.label-tag .label-barcode svg {
+    width: 44mm;
+    height: 12mm;
+}
+
+.label-tag .label-code {
+    font-size: 6pt;
+    font-family: monospace;
+}
+
+/* Print controls toolbar */
+.print-controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 20px;
+    background: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.print-btn {
+    padding: 10px 24px;
+    background: #3b82f6;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.back-btn {
+    padding: 10px 20px;
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+@media print {
+    body {
+        background: #fff !important;
+        padding: 0 !important;
+    }
+    .print-page-wrapper {
+        padding: 0 !important;
+    }
+    .labels-sheet-grid {
+        box-shadow: none !important;
+        padding: 0 !important;
+        gap: 4mm !important;
+    }
+    .label-shelf, .label-tag {
+        border: 1px solid #eee !important;
+    }
+    .no-print {
+        display: none !important;
+    }
+}
