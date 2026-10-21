@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\Item;
 use App\Models\ItemBatch;
 use App\Models\Transaction;
 use App\Models\TransferItem;
 use App\Models\Warehouse;
 use App\Models\WarehouseTransfer;
+use App\Services\InventoryValuationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +17,10 @@ use Illuminate\View\View;
 
 class WarehouseTransferController extends Controller
 {
+    public function __construct(
+        protected InventoryValuationService $valuationService
+    ) {}
+
     public function index(): View
     {
         $transfers = WarehouseTransfer::with(['fromWarehouse', 'toWarehouse', 'requester', 'items.item'])
@@ -27,7 +33,7 @@ class WarehouseTransferController extends Controller
     public function create(): View
     {
         $warehouses = Warehouse::where('is_active', true)->get();
-        $items = Item::where('quantity', '>', 0)->with('primaryUnit')->get();
+        $items      = Item::where('quantity', '>', 0)->with('primaryUnit')->get();
 
         return view('transfers.create', compact('warehouses', 'items'));
     }
@@ -35,38 +41,79 @@ class WarehouseTransferController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'from_warehouse_id' => 'required|exists:warehouses,id|different:to_warehouse_id',
-            'to_warehouse_id' => 'required|exists:warehouses,id',
-            'notes' => 'nullable|string',
-            'items' => 'required|array|min:1',
-            'items.*.item_id' => 'required|exists:items,id',
-            'items.*.quantity' => 'required|numeric|min:1',
+            'from_warehouse_id'      => ['required', 'integer', 'exists:warehouses,id', 'different:to_warehouse_id'],
+            'to_warehouse_id'        => ['required', 'integer', 'exists:warehouses,id'],
+            'notes'                  => ['nullable', 'string', 'max:500'],
+            'items'                  => ['required', 'array', 'min:1'],
+            'items.*.item_id'        => ['required', 'integer', 'exists:items,id'],
+            'items.*.quantity'       => ['required', 'numeric', 'min:0.001'],
         ]);
 
-        DB::transaction(function () use ($validated, $request) {
-            $transferNumber = 'TRF-'.strtoupper(uniqid());
+        // Server-side: source ≠ destination (belt-and-suspenders on top of 'different' rule)
+        if ($validated['from_warehouse_id'] === $validated['to_warehouse_id']) {
+            return back()->withErrors(['to_warehouse_id' => __('مستودع الوجهة يجب أن يختلف عن مستودع المصدر.')]);
+        }
 
-            $transfer = WarehouseTransfer::create([
-                'transfer_number' => $transferNumber,
-                'from_warehouse_id' => $validated['from_warehouse_id'],
-                'to_warehouse_id' => $validated['to_warehouse_id'],
-                'status' => 'pending',
-                'requested_by' => $request->user()->id,
-                'notes' => $validated['notes'] ?? null,
-            ]);
+        // Prevent duplicate item entries in the same transfer request
+        $itemIds = array_column($validated['items'], 'item_id');
+        if (count($itemIds) !== count(array_unique($itemIds))) {
+            return back()->withErrors(['items' => __('لا يمكن تكرار الصنف نفسه في طلب تحويل واحد.')]);
+        }
 
-            foreach ($validated['items'] as $itemData) {
-                $item = Item::findOrFail($itemData['item_id']);
-                TransferItem::create([
-                    'warehouse_transfer_id' => $transfer->id,
-                    'item_id' => $item->id,
-                    'quantity' => $itemData['quantity'],
-                    'unit_cost' => $item->purchase_price ?: 0,
+        try {
+            $transfer = DB::transaction(function () use ($validated, $request) {
+                $fromWarehouseId = (int) $validated['from_warehouse_id'];
+
+                // Validate that each item actually has sufficient stock in the SOURCE warehouse
+                foreach ($validated['items'] as $itemData) {
+                    $item             = Item::findOrFail($itemData['item_id']);
+                    $requestedQty     = (float) $itemData['quantity'];
+
+                    $availableInSource = (float) ItemBatch::where('item_id', $item->id)
+                        ->where('warehouse_id', $fromWarehouseId)
+                        ->where('status', 'active')
+                        ->where('quantity_remaining', '>', 0)
+                        ->sum('quantity_remaining');
+
+                    if ($availableInSource < $requestedQty) {
+                        throw new \DomainException(
+                            __('الكمية المطلوبة للصنف ":name" غير متوفرة في مستودع المصدر. المتوفر: :available', [
+                                'name'      => $item->name,
+                                'available' => $availableInSource,
+                            ])
+                        );
+                    }
+                }
+
+                $transfer = WarehouseTransfer::create([
+                    'transfer_number'  => 'TRF-'.strtoupper(uniqid()),
+                    'from_warehouse_id'=> $validated['from_warehouse_id'],
+                    'to_warehouse_id'  => $validated['to_warehouse_id'],
+                    'status'           => 'pending',
+                    'requested_by'     => $request->user()->id,
+                    'notes'            => $validated['notes'] ?? null,
                 ]);
-            }
-        });
 
-        return redirect()->route('transfers.index')->with('success', __('Internal stock transfer requested successfully.'));
+                foreach ($validated['items'] as $itemData) {
+                    $item = Item::findOrFail($itemData['item_id']);
+                    TransferItem::create([
+                        'warehouse_transfer_id' => $transfer->id,
+                        'item_id'               => $item->id,
+                        'quantity'              => (float) $itemData['quantity'],
+                        'unit_cost'             => (float) ($item->purchase_price ?: 0),
+                    ]);
+                }
+
+                return $transfer;
+            });
+        } catch (\DomainException $e) {
+            return back()->withErrors(['items' => $e->getMessage()]);
+        }
+
+        ActivityLog::log('إنشاء طلب تحويل', "تم إنشاء طلب تحويل رقم: {$transfer->transfer_number}");
+
+        return redirect()->route('transfers.index')
+            ->with('success', __('تم إنشاء طلب التحويل الداخلي بنجاح.'));
     }
 
     public function show(WarehouseTransfer $transfer): View
@@ -77,91 +124,161 @@ class WarehouseTransferController extends Controller
     }
 
     /**
-     * Dispatch items from source warehouse
+     * Dispatch items from source warehouse.
+     * Deducts quantities from source batches and records outbound transactions.
      */
     public function dispatchTransfer(Request $request, WarehouseTransfer $transfer): RedirectResponse
     {
         if ($transfer->status !== 'pending') {
-            return back()->with('error', __('Transfer cannot be dispatched in its current state.'));
+            return back()->with('error', __('لا يمكن إرسال التحويل في حالته الحالية.'));
         }
 
-        DB::transaction(function () use ($request, $transfer) {
-            $transfer->update([
-                'status' => 'in_transit',
-                'dispatched_by' => $request->user()->id,
-                'dispatched_at' => now(),
-            ]);
+        try {
+            DB::transaction(function () use ($request, $transfer) {
+                // Lock the transfer row to prevent concurrent dispatch attempts
+                $locked = WarehouseTransfer::where('id', $transfer->id)->lockForUpdate()->firstOrFail();
 
-            foreach ($transfer->items as $transferItem) {
-                // Log outbound transaction from source warehouse
-                Transaction::create([
-                    'item_id' => $transferItem->item_id,
-                    'user_id' => $request->user()->id,
-                    'warehouse_id' => $transfer->from_warehouse_id,
-                    'type' => 'out',
-                    'movement_reason' => 'transfer_out',
-                    'quantity' => $transferItem->quantity,
-                    'unit_price' => $transferItem->unit_cost,
-                    'total_amount' => $transferItem->quantity * $transferItem->unit_cost,
-                    'reference_doc' => $transfer->transfer_number,
-                    'notes' => 'Dispatched transfer to '.$transfer->toWarehouse->name,
-                    'status' => 'completed',
+                if ($locked->status !== 'pending') {
+                    throw new \DomainException(__('تم إرسال هذا التحويل مسبقاً.'));
+                }
+
+                $locked->load('items.item');
+
+                foreach ($locked->items as $transferItem) {
+                    $item = Item::where('id', $transferItem->item_id)->lockForUpdate()->firstOrFail();
+
+                    // Allocate from source warehouse batches (throws DomainException if insufficient)
+                    $allocations = $this->valuationService->allocateOutboundStock(
+                        $item,
+                        (float) $transferItem->quantity,
+                        $locked->from_warehouse_id
+                    );
+
+                    // Decrement global item quantity
+                    $item->decrement('quantity', (float) $transferItem->quantity);
+
+                    // Use the actual weighted-average cost from allocated batches
+                    $totalCost    = collect($allocations)->sum('total_cost');
+                    $avgUnitCost  = (float) $transferItem->quantity > 0
+                        ? $totalCost / (float) $transferItem->quantity
+                        : (float) $transferItem->unit_cost;
+
+                    Transaction::create([
+                        'item_id'         => $item->id,
+                        'user_id'         => $request->user()->id,
+                        'warehouse_id'    => $locked->from_warehouse_id,
+                        'type'            => 'out',
+                        'movement_reason' => 'transfer_out',
+                        'quantity'        => (float) $transferItem->quantity,
+                        'unit_price'      => round($avgUnitCost, 4),
+                        'total_amount'    => round($totalCost, 2),
+                        'reference_doc'   => $locked->transfer_number,
+                        'notes'           => 'تحويل داخلي إلى: '.($locked->toWarehouse->name ?? '—'),
+                        'status'          => 'completed',
+                    ]);
+                }
+
+                $locked->update([
+                    'status'        => 'in_transit',
+                    'dispatched_by' => $request->user()->id,
+                    'dispatched_at' => now(),
                 ]);
-            }
-        });
+            });
+        } catch (\DomainException $e) {
+            return back()->with('error', $e->getMessage());
+        }
 
-        return back()->with('success', __('Transfer marked as In-Transit.'));
+        ActivityLog::log('إرسال تحويل', "تم إرسال التحويل رقم: {$transfer->transfer_number}");
+
+        return back()->with('success', __('تم تغيير حالة التحويل إلى "في الطريق" وخصم الكمية من المصدر.'));
     }
 
     /**
-     * Receive items at destination warehouse
+     * Receive items at destination warehouse.
+     * Creates new destination batches and records inbound transactions.
      */
     public function receiveTransfer(Request $request, WarehouseTransfer $transfer): RedirectResponse
     {
         if ($transfer->status !== 'in_transit') {
-            return back()->with('error', __('Only in-transit transfers can be received.'));
+            return back()->with('error', __('فقط التحويلات قيد النقل يمكن استلامها.'));
         }
 
-        DB::transaction(function () use ($request, $transfer) {
-            $transfer->update([
-                'status' => 'completed',
-                'received_by' => $request->user()->id,
-                'received_at' => now(),
-            ]);
+        // Allow partial receipt: operator can specify actual received quantities
+        $request->validate([
+            'received_quantities'         => ['nullable', 'array'],
+            'received_quantities.*'       => ['nullable', 'numeric', 'min:0'],
+        ]);
 
-            foreach ($transfer->items as $transferItem) {
-                $transferItem->update([
-                    'received_quantity' => $transferItem->quantity,
+        try {
+            DB::transaction(function () use ($request, $transfer) {
+                // Lock to prevent double-receive
+                $locked = WarehouseTransfer::where('id', $transfer->id)->lockForUpdate()->firstOrFail();
+
+                if ($locked->status !== 'in_transit') {
+                    throw new \DomainException(__('تم استلام هذا التحويل مسبقاً.'));
+                }
+
+                $locked->load('items.item');
+                $receivedQtys = $request->input('received_quantities', []);
+
+                foreach ($locked->items as $transferItem) {
+                    // Use operator-entered quantity if provided, otherwise assume full quantity received
+                    $receivedQty = isset($receivedQtys[$transferItem->id])
+                        ? (float) $receivedQtys[$transferItem->id]
+                        : (float) $transferItem->quantity;
+
+                    // Received cannot exceed dispatched
+                    $receivedQty = min($receivedQty, (float) $transferItem->quantity);
+
+                    $transferItem->update(['received_quantity' => $receivedQty]);
+
+                    if ($receivedQty <= 0) {
+                        continue; // Nothing received for this line — skip batch/transaction creation
+                    }
+
+                    $item = Item::where('id', $transferItem->item_id)->lockForUpdate()->firstOrFail();
+
+                    // Create a destination-warehouse batch for the received quantity
+                    ItemBatch::create([
+                        'item_id'           => $transferItem->item_id,
+                        'warehouse_id'      => $locked->to_warehouse_id,
+                        'batch_number'      => 'TRF-'.$locked->transfer_number.'-'.strtoupper(substr(uniqid(), -4)),
+                        'purchase_cost'     => (float) $transferItem->unit_cost,
+                        'quantity_received' => $receivedQty,
+                        'quantity_remaining'=> $receivedQty,
+                        'status'            => 'active',
+                    ]);
+
+                    // Increment global item quantity by actually received amount
+                    $item->increment('quantity', $receivedQty);
+
+                    Transaction::create([
+                        'item_id'         => $transferItem->item_id,
+                        'user_id'         => $request->user()->id,
+                        'warehouse_id'    => $locked->to_warehouse_id,
+                        'type'            => 'in',
+                        'movement_reason' => 'transfer_in',
+                        'quantity'        => $receivedQty,
+                        'unit_price'      => (float) $transferItem->unit_cost,
+                        'total_amount'    => round($receivedQty * (float) $transferItem->unit_cost, 2),
+                        'reference_doc'   => $locked->transfer_number,
+                        'notes'           => 'استلام تحويل داخلي من: '.($locked->fromWarehouse->name ?? '—'),
+                        'status'          => 'completed',
+                    ]);
+                }
+
+                $locked->update([
+                    'status'      => 'completed',
+                    'received_by' => $request->user()->id,
+                    'received_at' => now(),
                 ]);
+            });
+        } catch (\DomainException $e) {
+            return back()->with('error', $e->getMessage());
+        }
 
-                // Create or update destination warehouse batch
-                ItemBatch::create([
-                    'item_id' => $transferItem->item_id,
-                    'warehouse_id' => $transfer->to_warehouse_id,
-                    'batch_number' => 'TRF-'.$transfer->transfer_number,
-                    'purchase_cost' => $transferItem->unit_cost,
-                    'quantity_received' => $transferItem->quantity,
-                    'quantity_remaining' => $transferItem->quantity,
-                    'status' => 'active',
-                ]);
+        ActivityLog::log('استلام تحويل', "تم استلام التحويل رقم: {$transfer->transfer_number}");
 
-                // Log inbound transaction into destination warehouse
-                Transaction::create([
-                    'item_id' => $transferItem->item_id,
-                    'user_id' => $request->user()->id,
-                    'warehouse_id' => $transfer->to_warehouse_id,
-                    'type' => 'in',
-                    'movement_reason' => 'transfer_in',
-                    'quantity' => $transferItem->quantity,
-                    'unit_price' => $transferItem->unit_cost,
-                    'total_amount' => $transferItem->quantity * $transferItem->unit_cost,
-                    'reference_doc' => $transfer->transfer_number,
-                    'notes' => 'Received transfer from '.$transfer->fromWarehouse->name,
-                    'status' => 'completed',
-                ]);
-            }
-        });
-
-        return back()->with('success', __('Stock transfer received and reconciled successfully.'));
+        return back()->with('success', __('تم استلام التحويل وتحديث أرصدة المستودع الوجهة بنجاح.'));
     }
 }

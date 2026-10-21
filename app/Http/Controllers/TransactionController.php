@@ -54,9 +54,9 @@ class TransactionController extends Controller
         $items = $itemsQuery->orderBy('name')->get();
 
         $warehouses = Warehouse::where('is_active', true)->get();
-        $suppliers = Supplier::where('is_active', true)->get();
-        $customers = Customer::where('is_active', true)->get();
-        $units = Unit::where('is_active', true)->get();
+        $suppliers  = Supplier::where('is_active', true)->get();
+        $customers  = Customer::where('is_active', true)->get();
+        $units      = Unit::where('is_active', true)->get();
 
         return view('transactions.index', compact('transactions', 'items', 'warehouses', 'suppliers', 'customers', 'units'));
     }
@@ -65,125 +65,167 @@ class TransactionController extends Controller
     {
         $user = $request->user();
 
-        // Enforce worker permissions
+        // --- Permission checks ---
         if ($user->isViewOnlyWorker()) {
             return back()->with('error', __('حسابك مخصص للعرض فقط، لا يمكنك تسجيل عمليات إدخال أو صرف.'));
         }
 
         if ($user->isAuditorWorker()) {
-            return back()->with('error', __('حسابك مخصص للجرد الحراري والفرز، لا يمتلك صلاحية تسجيل الوارد والمنصرف المباشر.'));
+            return back()->with('error', __('حسابك مخصص للجرد والفرز، لا يمتلك صلاحية تسجيل الوارد والمنصرف المباشر.'));
         }
 
         if (! $user->canCreateTransactions()) {
             return back()->with('error', __('ليس لديك صلاحية لإجراء حركات المخزون.'));
         }
 
+        // --- Validation ---
         $validated = $request->validate([
-            'item_id' => ['required', 'exists:items,id'],
-            'warehouse_id' => ['nullable', 'exists:warehouses,id'],
-            'supplier_id' => ['nullable', 'exists:suppliers,id'],
-            'customer_id' => ['nullable', 'exists:customers,id'],
-            'unit_id' => ['nullable', 'exists:units,id'],
-            'type' => ['required', 'in:in,out'],
-            'movement_reason' => ['nullable', 'string'],
-            'quantity' => ['required', 'numeric', 'min:1'],
-            'unit_price' => ['nullable', 'numeric', 'min:0'],
-            'batch_number' => ['nullable', 'string', 'max:100'],
-            'expiry_date' => ['nullable', 'date'],
+            'item_id'       => ['required', 'integer', 'exists:items,id'],
+            'warehouse_id'  => ['nullable', 'integer', 'exists:warehouses,id'],
+            'supplier_id'   => ['nullable', 'integer', 'exists:suppliers,id'],
+            'customer_id'   => ['nullable', 'integer', 'exists:customers,id'],
+            'unit_id'       => ['nullable', 'integer', 'exists:units,id'],
+            'type'          => ['required', 'in:in,out'],
+            'movement_reason' => ['nullable', 'string', 'max:100'],
+            // Allow fractional quantities — policy: items decide their own precision
+            'quantity'      => ['required', 'numeric', 'min:0.001'],
+            'unit_price'    => ['nullable', 'numeric', 'min:0'],
+            'batch_number'  => ['nullable', 'string', 'max:100'],
+            'expiry_date'   => ['nullable', 'date', 'after_or_equal:manufacture_date'],
+            'manufacture_date' => ['nullable', 'date'],
             'reference_doc' => ['nullable', 'string', 'max:100'],
-            'document_type' => ['nullable', 'string'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'document_type' => ['nullable', 'string', 'max:100'],
+            'notes'         => ['nullable', 'string', 'max:500'],
         ]);
 
         $item = Item::findOrFail($validated['item_id']);
 
-        // Department isolation check on item creation
+        // Department isolation: non-admin users can only operate on their department's items
         if (! $user->isAdmin() && $user->department_id && $item->department_id !== $user->department_id) {
             return back()->with('error', __('غير مسموح لك بإجراء عمليات على أصناف تابعة لأقسام أخرى.'));
         }
 
+        // Unit conversion: resolve the quantity to the base unit BEFORE stock checks
         $qty = (float) $validated['quantity'];
 
-        // Unit conversion if secondary unit selected
         if (! empty($validated['unit_id'])) {
             $selectedUnit = Unit::find($validated['unit_id']);
-            if ($selectedUnit) {
+            // Ensure the unit actually belongs to this item (primary or secondary)
+            $isValidUnit = $selectedUnit && in_array($selectedUnit->id, array_filter([
+                $item->unit_id,
+                $item->secondary_unit_id,
+            ]));
+
+            if ($selectedUnit && $isValidUnit) {
                 $qty = $selectedUnit->toBase($qty);
+            } elseif ($selectedUnit && ! $isValidUnit) {
+                return back()->withErrors(['unit_id' => __('وحدة القياس المحددة غير مرتبطة بهذا الصنف.')]);
             }
         }
 
+        // Unit price — prefer explicit input, fall back to item's catalogue price
         $unitPrice = isset($validated['unit_price']) && $validated['unit_price'] > 0
             ? (float) $validated['unit_price']
             : ($validated['type'] === 'in' ? (float) $item->purchase_price : (float) $item->selling_price);
 
-        if ($validated['type'] === 'out' && $item->quantity < $qty) {
-            return back()->withErrors(['quantity' => __('الكمية المتوفرة بالمخزون غير كافية. المتوفر: :qty', ['qty' => $item->quantity])]);
+        try {
+            $transactionResult = DB::transaction(function () use ($validated, $item, $qty, $unitPrice, $request, $user) {
+                // Lock the item row to prevent concurrent quantity modifications
+                $lockedItem = Item::where('id', $item->id)->lockForUpdate()->firstOrFail();
+
+                if ($validated['type'] === 'out') {
+                    // Re-check balance against the locked row
+                    if ((float) $lockedItem->quantity < $qty) {
+                        throw new \DomainException(
+                            __('الكمية المتوفرة بالمخزون غير كافية. المتوفر: :qty', ['qty' => $lockedItem->quantity])
+                        );
+                    }
+
+                    // Allocate from batches — throws DomainException if insufficient
+                    $this->valuationService->allocateOutboundStock(
+                        $lockedItem,
+                        $qty,
+                        $validated['warehouse_id'] ?? null
+                    );
+
+                    // Decrement as float, preserving fractional precision
+                    $lockedItem->decrement('quantity', $qty);
+                    $batchId = null;
+                } else {
+                    // Inbound: create a new batch
+                    $batchNumber = ! empty($validated['batch_number'])
+                        ? $validated['batch_number']
+                        : 'LOT-'.date('Ymd').'-'.strtoupper(uniqid());
+
+                    $batch = ItemBatch::create([
+                        'item_id'           => $lockedItem->id,
+                        'warehouse_id'      => $validated['warehouse_id'] ?? null,
+                        'supplier_id'       => $validated['supplier_id'] ?? null,
+                        'batch_number'      => $batchNumber,
+                        'purchase_cost'     => $unitPrice,
+                        'quantity_received' => $qty,
+                        'quantity_remaining'=> $qty,
+                        'manufacture_date'  => $validated['manufacture_date'] ?? null,
+                        'expiry_date'       => $validated['expiry_date'] ?? null,
+                        'status'            => 'active',
+                    ]);
+                    $batchId = $batch->id;
+
+                    // Increment as float — no silent (int) cast
+                    $lockedItem->increment('quantity', $qty);
+
+                    if ($unitPrice > 0) {
+                        $lockedItem->purchase_price = $unitPrice;
+                        $lockedItem->save();
+                    }
+                }
+
+                $transaction = Transaction::create([
+                    'item_id'         => $lockedItem->id,
+                    'user_id'         => $user->id,
+                    'warehouse_id'    => $validated['warehouse_id'] ?? null,
+                    'item_batch_id'   => $batchId ?? null,
+                    'supplier_id'     => $validated['supplier_id'] ?? null,
+                    'customer_id'     => $validated['customer_id'] ?? null,
+                    'unit_id'         => $validated['unit_id'] ?? $lockedItem->unit_id,
+                    'type'            => $validated['type'],
+                    'movement_reason' => $validated['movement_reason']
+                        ?? ($validated['type'] === 'in' ? 'purchase' : 'sale_delivery'),
+                    'quantity'        => $qty,
+                    'unit_price'      => $unitPrice,
+                    'total_amount'    => round($qty * $unitPrice, 2),
+                    'reference_doc'   => $validated['reference_doc'] ?? null,
+                    'notes'           => $validated['notes'] ?? null,
+                    'status'          => 'completed',
+                ]);
+
+                // Link supporting movement document when reference number provided
+                if (! empty($validated['reference_doc'])) {
+                    MovementDocument::create([
+                        'transaction_id' => $transaction->id,
+                        'document_type'  => $validated['document_type']
+                            ?? ($validated['type'] === 'in' ? 'delivery_note' : 'delivery_note'),
+                        'document_number'=> $validated['reference_doc'],
+                        'reference_party'=> $validated['supplier_id']
+                            ? 'المورد #'.$validated['supplier_id']
+                            : ($validated['customer_id'] ? 'العميل #'.$validated['customer_id'] : null),
+                        'notes'          => $validated['notes'] ?? null,
+                    ]);
+                }
+
+                return ['transaction' => $transaction, 'item' => $lockedItem];
+            });
+        } catch (\DomainException $e) {
+            return back()->withErrors(['quantity' => $e->getMessage()]);
         }
 
-        DB::transaction(function () use ($validated, $item, $qty, $unitPrice, $request) {
-            $batchId = null;
-
-            if ($validated['type'] === 'in') {
-                // Inbound receipt: create new lot/batch if batch number provided
-                $batchNumber = ! empty($validated['batch_number']) ? $validated['batch_number'] : 'LOT-'.date('Ymd').'-'.strtoupper(uniqid());
-                $batch = ItemBatch::create([
-                    'item_id' => $item->id,
-                    'warehouse_id' => $validated['warehouse_id'] ?? null,
-                    'supplier_id' => $validated['supplier_id'] ?? null,
-                    'batch_number' => $batchNumber,
-                    'purchase_cost' => $unitPrice,
-                    'quantity_received' => $qty,
-                    'quantity_remaining' => $qty,
-                    'expiry_date' => $validated['expiry_date'] ?? null,
-                    'status' => 'active',
-                ]);
-                $batchId = $batch->id;
-
-                $item->increment('quantity', (int) $qty);
-                if ($unitPrice > 0) {
-                    $item->purchase_price = $unitPrice;
-                    $item->save();
-                }
-            } else {
-                // Outbound: allocate via FIFO/LIFO valuation service
-                $this->valuationService->allocateOutboundStock($item, $qty, $validated['warehouse_id'] ?? null);
-                $item->decrement('quantity', (int) $qty);
-            }
-
-            $transaction = Transaction::create([
-                'item_id' => $item->id,
-                'user_id' => $request->user()->id,
-                'warehouse_id' => $validated['warehouse_id'] ?? null,
-                'item_batch_id' => $batchId,
-                'supplier_id' => $validated['supplier_id'] ?? null,
-                'customer_id' => $validated['customer_id'] ?? null,
-                'unit_id' => $validated['unit_id'] ?? $item->unit_id,
-                'type' => $validated['type'],
-                'movement_reason' => $validated['movement_reason'] ?? ($validated['type'] === 'in' ? 'purchase' : 'sale_delivery'),
-                'quantity' => $qty,
-                'unit_price' => $unitPrice,
-                'total_amount' => $qty * $unitPrice,
-                'reference_doc' => $validated['reference_doc'] ?? null,
-                'notes' => $validated['notes'] ?? null,
-                'status' => 'completed',
-            ]);
-
-            // Save linked movement document if document number provided
-            if (! empty($validated['reference_doc'])) {
-                MovementDocument::create([
-                    'transaction_id' => $transaction->id,
-                    'document_type' => $validated['document_type'] ?? ($validated['type'] === 'in' ? 'delivery_note' : 'delivery_note'),
-                    'document_number' => $validated['reference_doc'],
-                    'reference_party' => $validated['supplier_id'] ? 'المورد #'.$validated['supplier_id'] : ($validated['customer_id'] ? 'العميل #'.$validated['customer_id'] : null),
-                    'notes' => $validated['notes'] ?? null,
-                ]);
-            }
-        });
-
+        $item = $transactionResult['item'];
         $actionType = $validated['type'] === 'in' ? 'توثيق حركة وارد' : 'توثيق حركة منصرف';
         ActivityLog::log($actionType, "تم توثيق حركة (الكمية: {$qty}) للصنف: {$item->name}", $item->department_id);
 
-        $message = $validated['type'] === 'in' ? __('تم تسجيل عملية التوريد (الوارد) بنجاح.') : __('تم تسجيل عملية الصرف (المنصرف) بنجاح.');
+        $message = $validated['type'] === 'in'
+            ? __('تم تسجيل عملية التوريد (الوارد) بنجاح.')
+            : __('تم تسجيل عملية الصرف (المنصرف) بنجاح.');
 
         if ($validated['type'] === 'in') {
             return redirect()->route('worker.labels.print', ['item' => $item->id])

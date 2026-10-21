@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Middleware\AuthApiToken;
+use App\Http\Middleware\CheckApiScope;
 use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\SetLocale;
 use Illuminate\Foundation\Application;
@@ -18,7 +20,9 @@ return Application::configure(basePath: dirname(__DIR__))
             SetLocale::class,
         ]);
         $middleware->alias([
-            'role' => CheckRole::class,
+            'role'           => CheckRole::class,
+            'auth.api_token' => AuthApiToken::class,
+            'api.scope'      => CheckApiScope::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

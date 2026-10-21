@@ -104,9 +104,20 @@ Route::middleware('auth')->group(function () {
 });
 
 // REST API Integration routes for ERP / Accounting / Third-party systems
-Route::prefix('api/v1')->name('api.v1.')->group(function () {
-    Route::get('/stock-balances', [InventoryApiController::class, 'stockBalances'])->name('stock-balances');
-    Route::get('/items/barcode/{code}', [InventoryApiController::class, 'findByBarcode'])->name('items.barcode');
-    Route::get('/valuation-summary', [InventoryApiController::class, 'valuationSummary'])->name('valuation-summary');
-    Route::post('/transactions/external-sync', [InventoryApiController::class, 'recordExternalTransaction'])->name('transactions.external-sync');
+// All API routes require a valid API token via the 'auth.api_token' middleware.
+// Read-only endpoints (stock-balances, barcode lookup, valuation) use 'api.read' scope.
+// The external-sync (write) endpoint requires the 'api.write' scope to prevent
+// read-only integrations from creating transactions.
+Route::prefix('api/v1')->name('api.v1.')->middleware('auth.api_token')->group(function () {
+    // Read-only endpoints
+    Route::middleware('api.scope:read')->group(function () {
+        Route::get('/stock-balances', [InventoryApiController::class, 'stockBalances'])->name('stock-balances');
+        Route::get('/items/barcode/{code}', [InventoryApiController::class, 'findByBarcode'])->name('items.barcode');
+        Route::get('/valuation-summary', [InventoryApiController::class, 'valuationSummary'])->name('valuation-summary');
+    });
+
+    // Write endpoints — requires explicit 'write' scope
+    Route::middleware('api.scope:write')->group(function () {
+        Route::post('/transactions/external-sync', [InventoryApiController::class, 'recordExternalTransaction'])->name('transactions.external-sync');
+    });
 });

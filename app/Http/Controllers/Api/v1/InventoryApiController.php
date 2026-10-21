@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Api\v1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Item;
+use App\Models\ItemBatch;
 use App\Models\Transaction;
 use App\Services\InventoryValuationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class InventoryApiController extends Controller
 {
@@ -16,23 +18,31 @@ class InventoryApiController extends Controller
     ) {}
 
     /**
-     * Get real-time stock balances across all items and warehouses
+     * Get real-time stock balances across all items and warehouses.
      */
     public function stockBalances(Request $request): JsonResponse
     {
+        $request->validate([
+            'per_page'    => ['nullable', 'integer', 'min:1', 'max:200'],
+            'category_id' => ['nullable', 'integer', 'exists:item_categories,id'],
+            'low_stock'   => ['nullable', 'in:0,1'],
+        ]);
+
+        $perPage = (int) $request->input('per_page', 50);
+
         $items = Item::with(['primaryUnit', 'category', 'department', 'batches' => fn ($q) => $q->active()])
-            ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->category_id))
-            ->when($request->filled('low_stock') && $request->low_stock == '1', fn ($q) => $q->whereColumn('quantity', '<=', 'min_alert_level'))
-            ->paginate($request->input('per_page', 50));
+            ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->integer('category_id')))
+            ->when($request->input('low_stock') === '1', fn ($q) => $q->whereColumn('quantity', '<=', 'min_alert_level'))
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $items,
+            'data'   => $items,
         ]);
     }
 
     /**
-     * Get item details by barcode or SKU
+     * Get item details by barcode or SKU.
      */
     public function findByBarcode(string $code): JsonResponse
     {
@@ -47,71 +57,112 @@ class InventoryApiController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'item' => $item,
+            'item'   => $item,
         ]);
     }
 
     /**
-     * Get valuation & holding cost summary for ERP / Financial modules
+     * Get valuation & holding cost summary for ERP / Financial modules.
      */
     public function valuationSummary(): JsonResponse
     {
         $summary = $this->valuationService->getInventoryValuationSummary();
 
         return response()->json([
-            'status' => 'success',
+            'status'    => 'success',
             'valuation' => $summary,
             'timestamp' => now()->toISOString(),
         ]);
     }
 
     /**
-     * Ingest external ERP transactions (Inbound PO receipt / Outbound Sales delivery)
+     * Ingest external ERP transactions (Inbound PO receipt / Outbound Sales delivery).
+     *
+     * SECURITY: This endpoint requires a write-scoped API token.
+     * It never falls back to user_id=1 — unauthenticated requests are rejected at the middleware layer.
      */
     public function recordExternalTransaction(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'barcode' => 'required|string|exists:items,barcode',
-            'type' => 'required|in:in,out',
-            'quantity' => 'required|numeric|min:0.01',
-            'unit_price' => 'nullable|numeric|min:0',
-            'movement_reason' => 'required|string',
-            'reference_doc' => 'nullable|string',
-            'notes' => 'nullable|string',
+            'barcode'         => ['required', 'string', 'exists:items,barcode'],
+            'type'            => ['required', 'in:in,out'],
+            'quantity'        => ['required', 'numeric', 'min:0.001'],
+            'unit_price'      => ['nullable', 'numeric', 'min:0'],
+            'movement_reason' => ['required', 'string', 'max:255'],
+            'reference_doc'   => ['nullable', 'string', 'max:100'],
+            'notes'           => ['nullable', 'string', 'max:500'],
         ]);
 
-        $item = Item::where('barcode', $validated['barcode'])->firstOrFail();
         $qty = (float) $validated['quantity'];
 
-        if ($validated['type'] === 'out' && $item->quantity < $qty) {
-            return response()->json(['status' => 'error', 'message' => 'Insufficient stock balance'], 422);
+        try {
+            $result = DB::transaction(function () use ($validated, $qty, $request) {
+                /** @var Item $item */
+                $item = Item::where('barcode', $validated['barcode'])->lockForUpdate()->firstOrFail();
+
+                if ($validated['type'] === 'out') {
+                    // Verify sufficient stock exists BEFORE deducting any batches
+                    $available = (float) ItemBatch::where('item_id', $item->id)
+                        ->where('status', 'active')
+                        ->where('quantity_remaining', '>', 0)
+                        ->sum('quantity_remaining');
+
+                    if ($available < $qty) {
+                        throw new \DomainException(
+                            "Insufficient batch stock. Requested: {$qty}, Available: {$available}"
+                        );
+                    }
+
+                    $allocations = $this->valuationService->allocateOutboundStock($item, $qty);
+                    $item->decrement('quantity', $qty);
+
+                    $unitPrice = (float) ($validated['unit_price']
+                        ?? collect($allocations)->avg('unit_cost')
+                        ?? (float) $item->selling_price);
+                } else {
+                    // Inbound: create a batch to maintain audit trail
+                    $unitPrice = (float) ($validated['unit_price'] ?? (float) $item->purchase_price);
+
+                    ItemBatch::create([
+                        'item_id'           => $item->id,
+                        'batch_number'      => 'ERP-'.now()->format('Ymd').'-'.strtoupper(uniqid()),
+                        'purchase_cost'     => $unitPrice,
+                        'quantity_received' => $qty,
+                        'quantity_remaining'=> $qty,
+                        'status'            => 'active',
+                    ]);
+
+                    $item->increment('quantity', $qty);
+                }
+
+                // Resolve the API client's identity from the token metadata (set by AuthApiToken middleware).
+                // There is NO fallback to any user ID — the token metadata must carry a name.
+                $tokenName = $request->attributes->get('api_token')['name'] ?? 'Unknown API Client';
+
+                $transaction = Transaction::create([
+                    'item_id'         => $item->id,
+                    'user_id'         => null, // External API — no web user; tracked via reference_doc & notes
+                    'type'            => $validated['type'],
+                    'movement_reason' => $validated['movement_reason'],
+                    'quantity'        => $qty,
+                    'unit_price'      => $unitPrice,
+                    'total_amount'    => round($qty * $unitPrice, 2),
+                    'reference_doc'   => $validated['reference_doc'] ?? null,
+                    'notes'           => ($validated['notes'] ?? 'ERP API Sync') . " | Client: {$tokenName}",
+                    'status'          => 'completed',
+                ]);
+
+                return ['transaction' => $transaction, 'item' => $item];
+            });
+
+            return response()->json([
+                'status'         => 'success',
+                'message'        => 'Transaction synchronized successfully',
+                'transaction_id' => $result['transaction']->id,
+                'new_balance'    => (float) $result['item']->fresh()->quantity,
+            ]);
+        } catch (\DomainException $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 422);
         }
-
-        if ($validated['type'] === 'in') {
-            $item->increment('quantity', (int) $qty);
-        } else {
-            $this->valuationService->allocateOutboundStock($item, $qty);
-            $item->decrement('quantity', (int) $qty);
-        }
-
-        $transaction = Transaction::create([
-            'item_id' => $item->id,
-            'user_id' => $request->user()?->id ?: 1,
-            'type' => $validated['type'],
-            'movement_reason' => $validated['movement_reason'],
-            'quantity' => $qty,
-            'unit_price' => $validated['unit_price'] ?? ($validated['type'] === 'in' ? $item->purchase_price : $item->selling_price),
-            'total_amount' => $qty * ($validated['unit_price'] ?? $item->purchase_price),
-            'reference_doc' => $validated['reference_doc'] ?? null,
-            'notes' => $validated['notes'] ?? 'Synced via ERP API Integration',
-            'status' => 'completed',
-        ]);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Transaction synchronized successfully',
-            'transaction_id' => $transaction->id,
-            'new_balance' => $item->fresh()->quantity,
-        ]);
     }
 }
