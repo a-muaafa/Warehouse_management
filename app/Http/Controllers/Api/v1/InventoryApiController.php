@@ -23,15 +23,19 @@ class InventoryApiController extends Controller
     public function stockBalances(Request $request): JsonResponse
     {
         $request->validate([
-            'per_page'    => ['nullable', 'integer', 'min:1', 'max:200'],
-            'category_id' => ['nullable', 'integer', 'exists:item_categories,id'],
-            'low_stock'   => ['nullable', 'in:0,1'],
+            'per_page'     => ['nullable', 'integer', 'min:1', 'max:200'],
+            'category_id'  => ['nullable', 'integer', 'exists:item_categories,id'],
+            'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,id'],
+            'low_stock'    => ['nullable', 'in:0,1'],
         ]);
 
         $perPage = (int) $request->input('per_page', 50);
 
-        $items = Item::with(['primaryUnit', 'category', 'department', 'batches' => fn ($q) => $q->active()])
+        $items = Item::with(['primaryUnit', 'category', 'department', 'batches' => function ($q) use ($request) {
+            $q->active()->when($request->filled('warehouse_id'), fn ($bq) => $bq->where('warehouse_id', $request->integer('warehouse_id')));
+        }])
             ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->integer('category_id')))
+            ->when($request->filled('warehouse_id'), fn ($q) => $q->whereHas('batches', fn ($bq) => $bq->active()->where('warehouse_id', $request->integer('warehouse_id'))))
             ->when($request->input('low_stock') === '1', fn ($q) => $q->whereColumn('quantity', '<=', 'min_alert_level'))
             ->paginate($perPage);
 
@@ -85,6 +89,8 @@ class InventoryApiController extends Controller
     {
         $validated = $request->validate([
             'barcode'         => ['required', 'string', 'exists:items,barcode'],
+            'warehouse_id'    => ['required_without:warehouse_code', 'nullable', 'integer', 'exists:warehouses,id'],
+            'warehouse_code'  => ['required_without:warehouse_id', 'nullable', 'string', 'exists:warehouses,code'],
             'type'            => ['required', 'in:in,out'],
             'quantity'        => ['required', 'numeric', 'min:0.001'],
             'unit_price'      => ['nullable', 'numeric', 'min:0'],
@@ -93,43 +99,55 @@ class InventoryApiController extends Controller
             'notes'           => ['nullable', 'string', 'max:500'],
         ]);
 
+        $warehouseId = $validated['warehouse_id'] ?? null;
+        if (! $warehouseId && ! empty($validated['warehouse_code'])) {
+            $warehouseId = \App\Models\Warehouse::where('code', $validated['warehouse_code'])->value('id');
+        }
+
         $qty = (float) $validated['quantity'];
 
         try {
-            $result = DB::transaction(function () use ($validated, $qty, $request) {
+            $result = DB::transaction(function () use ($validated, $qty, $warehouseId, $request) {
                 /** @var Item $item */
                 $item = Item::where('barcode', $validated['barcode'])->lockForUpdate()->firstOrFail();
 
                 if ($validated['type'] === 'out') {
-                    // Verify sufficient stock exists BEFORE deducting any batches
-                    $available = (float) ItemBatch::where('item_id', $item->id)
+                    // Verify sufficient stock exists in this warehouse BEFORE deducting any batches
+                    $availableQuery = ItemBatch::where('item_id', $item->id)
                         ->where('status', 'active')
-                        ->where('quantity_remaining', '>', 0)
-                        ->sum('quantity_remaining');
+                        ->where('quantity_remaining', '>', 0);
+
+                    if ($warehouseId) {
+                        $availableQuery->where('warehouse_id', $warehouseId);
+                    }
+
+                    $available = (float) $availableQuery->sum('quantity_remaining');
 
                     if ($available < $qty) {
+                        $context = $warehouseId ? " in warehouse #{$warehouseId}" : '';
                         throw new \DomainException(
-                            "Insufficient batch stock. Requested: {$qty}, Available: {$available}"
+                            "Insufficient batch stock{$context}. Requested: {$qty}, Available: {$available}"
                         );
                     }
 
-                    $allocations = $this->valuationService->allocateOutboundStock($item, $qty);
+                    $allocations = $this->valuationService->allocateOutboundStock($item, $qty, $warehouseId);
                     $item->decrement('quantity', $qty);
 
                     $unitPrice = (float) ($validated['unit_price']
                         ?? collect($allocations)->avg('unit_cost')
                         ?? (float) $item->selling_price);
                 } else {
-                    // Inbound: create a batch to maintain audit trail
+                    // Inbound: create a batch to maintain audit trail tied to the specific warehouse
                     $unitPrice = (float) ($validated['unit_price'] ?? (float) $item->purchase_price);
 
                     ItemBatch::create([
-                        'item_id'           => $item->id,
-                        'batch_number'      => 'ERP-'.now()->format('Ymd').'-'.strtoupper(uniqid()),
-                        'purchase_cost'     => $unitPrice,
-                        'quantity_received' => $qty,
-                        'quantity_remaining'=> $qty,
-                        'status'            => 'active',
+                        'item_id'            => $item->id,
+                        'warehouse_id'       => $warehouseId,
+                        'batch_number'       => 'ERP-'.now()->format('Ymd').'-'.strtoupper(uniqid()),
+                        'purchase_cost'      => $unitPrice,
+                        'quantity_received'  => $qty,
+                        'quantity_remaining' => $qty,
+                        'status'             => 'active',
                     ]);
 
                     $item->increment('quantity', $qty);
@@ -142,6 +160,7 @@ class InventoryApiController extends Controller
                 $transaction = Transaction::create([
                     'item_id'         => $item->id,
                     'user_id'         => null, // External API — no web user; tracked via reference_doc & notes
+                    'warehouse_id'    => $warehouseId,
                     'type'            => $validated['type'],
                     'movement_reason' => $validated['movement_reason'],
                     'quantity'        => $qty,
@@ -159,6 +178,7 @@ class InventoryApiController extends Controller
                 'status'         => 'success',
                 'message'        => 'Transaction synchronized successfully',
                 'transaction_id' => $result['transaction']->id,
+                'warehouse_id'   => $warehouseId,
                 'new_balance'    => (float) $result['item']->fresh()->quantity,
             ]);
         } catch (\DomainException $e) {

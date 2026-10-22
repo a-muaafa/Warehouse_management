@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Department;
 use App\Models\Item;
+use App\Models\ItemBatch;
 use App\Models\User;
 use App\Models\Warehouse;
 use App\Models\WarehouseTransfer;
@@ -28,6 +29,16 @@ class WarehouseTransferTest extends TestCase
             'quantity' => 100,
             'purchase_price' => 5.00,
             'department_id' => $dept->id,
+        ]);
+
+        ItemBatch::create([
+            'item_id' => $item->id,
+            'warehouse_id' => $wh1->id,
+            'batch_number' => 'LOT-SRC-01',
+            'purchase_cost' => 5.00,
+            'quantity_received' => 100,
+            'quantity_remaining' => 100,
+            'status' => 'active',
         ]);
 
         $this->actingAs($user);

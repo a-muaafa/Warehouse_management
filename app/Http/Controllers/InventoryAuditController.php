@@ -288,21 +288,50 @@ class InventoryAuditController extends Controller
                                 $this->valuationService->allocateOutboundStock($item, $shortageQty, $locked->warehouse_id);
                                 $item->decrement('quantity', $shortageQty);
                             } catch (\DomainException) {
-                                // Partial deduction: decrement whatever is available
-                                $available = (float) ItemBatch::where('item_id', $item->id)
+                                // If batch stock was less than requested shortage, deplete whatever is left in this warehouse
+                                $batches = ItemBatch::where('item_id', $item->id)
                                     ->where('warehouse_id', $locked->warehouse_id)
                                     ->where('status', 'active')
-                                    ->sum('quantity_remaining');
-                                $item->decrement('quantity', min($shortageQty, $available));
+                                    ->where('quantity_remaining', '>', 0)
+                                    ->get();
+                                $deducted = 0;
+                                foreach ($batches as $b) {
+                                    $deducted += (float) $b->quantity_remaining;
+                                    $b->update(['quantity_remaining' => 0, 'status' => 'depleted']);
+                                }
+                                $item->decrement('quantity', $deducted);
                             }
                         }
                     } else {
-                        // No warehouse scope: apply delta directly to global quantity
-                        // Do NOT set item->quantity = counted_quantity (would clobber other warehouses)
+                        // Global audit (no warehouse scope): synchronize both item quantity and batches
                         if ($diff > 0) {
+                            ItemBatch::create([
+                                'item_id'           => $item->id,
+                                'warehouse_id'      => null,
+                                'batch_number'      => 'ADJ-'.$locked->audit_number.'-'.strtoupper(substr(uniqid(), -4)),
+                                'purchase_cost'     => (float) $itemRecord->unit_cost,
+                                'quantity_received' => $diff,
+                                'quantity_remaining'=> $diff,
+                                'status'            => 'active',
+                            ]);
                             $item->increment('quantity', $diff);
                         } else {
-                            $item->decrement('quantity', abs($diff));
+                            $shortageQty = abs($diff);
+                            try {
+                                $this->valuationService->allocateOutboundStock($item, $shortageQty, null);
+                                $item->decrement('quantity', $shortageQty);
+                            } catch (\DomainException) {
+                                $batches = ItemBatch::where('item_id', $item->id)
+                                    ->where('status', 'active')
+                                    ->where('quantity_remaining', '>', 0)
+                                    ->get();
+                                $deducted = 0;
+                                foreach ($batches as $b) {
+                                    $deducted += (float) $b->quantity_remaining;
+                                    $b->update(['quantity_remaining' => 0, 'status' => 'depleted']);
+                                }
+                                $item->decrement('quantity', $deducted);
+                            }
                         }
                     }
 
