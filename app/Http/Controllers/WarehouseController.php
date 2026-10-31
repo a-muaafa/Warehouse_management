@@ -7,6 +7,7 @@ use App\Models\Warehouse;
 use App\Services\HoldingCostCalculatorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class WarehouseController extends Controller
@@ -15,18 +16,27 @@ class WarehouseController extends Controller
         protected HoldingCostCalculatorService $holdingCostService
     ) {}
 
-    public function index(): View
+    public function index(Request $request): View
     {
-        $warehouses = Warehouse::with(['department', 'batches' => fn ($q) => $q->where('status', 'active')])
-            ->withCount(['batches as active_batches_count' => fn ($q) => $q->where('status', 'active')])
-            ->latest()
-            ->paginate(15);
+        Gate::authorize('viewAny', Warehouse::class);
+
+        $user = $request->user();
+        $query = Warehouse::with(['department', 'batches' => fn ($q) => $q->where('status', 'active')])
+            ->withCount(['batches as active_batches_count' => fn ($q) => $q->where('status', 'active')]);
+
+        if (! $user->isSuperAdmin()) {
+            $query->whereIn('id', $user->accessibleWarehouseIds());
+        }
+
+        $warehouses = $query->latest()->paginate(15);
 
         return view('warehouses.index', compact('warehouses'));
     }
 
     public function create(): View
     {
+        Gate::authorize('create', Warehouse::class);
+
         $departments = Department::all();
 
         return view('warehouses.create', compact('departments'));
@@ -34,6 +44,8 @@ class WarehouseController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        Gate::authorize('create', Warehouse::class);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:warehouses,code',
@@ -49,13 +61,21 @@ class WarehouseController extends Controller
 
         $validated['is_active'] = $request->boolean('is_active', true);
 
-        Warehouse::create($validated);
+        $warehouse = Warehouse::create($validated);
+
+        // Automatically associate creator with the new warehouse if not super_admin
+        $user = $request->user();
+        if (! $user->isSuperAdmin()) {
+            $warehouse->users()->attach($user->id);
+        }
 
         return redirect()->route('warehouses.index')->with('success', __('Warehouse created successfully.'));
     }
 
     public function show(Warehouse $warehouse): View
     {
+        Gate::authorize('view', $warehouse);
+
         $warehouse->load(['department', 'batches.item', 'transactions.item', 'transactions.user']);
         $costSummary = $this->holdingCostService->calculateWarehouseHoldingCost($warehouse);
 
@@ -64,6 +84,8 @@ class WarehouseController extends Controller
 
     public function edit(Warehouse $warehouse): View
     {
+        Gate::authorize('update', $warehouse);
+
         $departments = Department::all();
 
         return view('warehouses.edit', compact('warehouse', 'departments'));
@@ -71,6 +93,8 @@ class WarehouseController extends Controller
 
     public function update(Request $request, Warehouse $warehouse): RedirectResponse
     {
+        Gate::authorize('update', $warehouse);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:warehouses,code,'.$warehouse->id,
@@ -93,6 +117,8 @@ class WarehouseController extends Controller
 
     public function destroy(Warehouse $warehouse): RedirectResponse
     {
+        Gate::authorize('delete', $warehouse);
+
         if ($warehouse->batches()->where('quantity_remaining', '>', 0)->exists()) {
             return back()->with('error', __('Cannot delete warehouse containing active inventory batches.'));
         }

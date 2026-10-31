@@ -14,6 +14,7 @@ use App\Services\InventoryValuationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class InventoryAuditController extends Controller
@@ -24,13 +25,24 @@ class InventoryAuditController extends Controller
 
     public function index(Request $request): View
     {
+        Gate::authorize('viewAny', InventoryAudit::class);
+
         $user = $request->user();
 
         $query = InventoryAudit::with(['warehouse', 'department', 'auditor', 'approver'])
             ->withCount('items');
 
-        if (! $user->isAdmin() && $user->department_id) {
-            $query->where('department_id', $user->department_id);
+        if (! $user->isSuperAdmin()) {
+            $accessibleIds = $user->accessibleWarehouseIds();
+            $query->where(function ($q) use ($accessibleIds, $user) {
+                if (! empty($accessibleIds)) {
+                    $q->whereIn('warehouse_id', $accessibleIds)
+                        ->orWhereNull('warehouse_id');
+                }
+                if ($user->department_id) {
+                    $q->where('department_id', $user->department_id);
+                }
+            });
         }
 
         $audits = $query->latest()->paginate(15);
@@ -40,14 +52,17 @@ class InventoryAuditController extends Controller
 
     public function create(Request $request): View
     {
+        Gate::authorize('create', InventoryAudit::class);
+
         $user = $request->user();
 
-        if (! $user->canPerformAudit()) {
-            abort(403, __('ليس لديك صلاحية لإنشاء عمليات الجرد الميداني.'));
+        $warehousesQuery = Warehouse::where('is_active', true);
+        if (! $user->isSuperAdmin()) {
+            $warehousesQuery->whereIn('id', $user->accessibleWarehouseIds());
         }
+        $warehouses = $warehousesQuery->get();
 
-        $warehouses = Warehouse::where('is_active', true)->get();
-        $departments = $user->isAdmin()
+        $departments = $user->isSuperAdmin()
             ? Department::all()
             : Department::where('id', $user->department_id)->get();
 
@@ -56,11 +71,9 @@ class InventoryAuditController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
-        $user = $request->user();
+        Gate::authorize('create', InventoryAudit::class);
 
-        if (! $user->canPerformAudit()) {
-            abort(403, __('ليس لديك صلاحية لإنشاء عمليات الجرد الميداني.'));
-        }
+        $user = $request->user();
 
         $validated = $request->validate([
             'title'         => ['required', 'string', 'max:255'],
@@ -70,8 +83,12 @@ class InventoryAuditController extends Controller
             'notes'         => ['nullable', 'string', 'max:1000'],
         ]);
 
+        if (! empty($validated['warehouse_id']) && ! $user->canAccessWarehouse((int) $validated['warehouse_id'])) {
+            abort(403, __('غير مصرح لك بإجراء جرد في مستودع لا يقع ضمن صلاحياتك.'));
+        }
+
         // Non-admin users are always scoped to their own department
-        if (! $user->isAdmin() && $user->department_id) {
+        if (! $user->isSuperAdmin() && $user->department_id) {
             $validated['department_id'] = $user->department_id;
         }
 
@@ -91,8 +108,6 @@ class InventoryAuditController extends Controller
             ]);
 
             // Scope audit items to the selected warehouse and/or department.
-            // If a warehouse is chosen, we use the items that actually have active batches there —
-            // NOT all items globally — so the book quantity reflects that warehouse's stock.
             $itemsQuery = Item::query();
 
             if (! empty($validated['department_id'])) {
@@ -100,7 +115,6 @@ class InventoryAuditController extends Controller
             }
 
             if (! empty($validated['warehouse_id'])) {
-                // Only include items with at least one active batch in this warehouse
                 $itemsQuery->whereHas(
                     'batches',
                     fn ($q) => $q->where('warehouse_id', $validated['warehouse_id'])
@@ -112,7 +126,6 @@ class InventoryAuditController extends Controller
             $items = $itemsQuery->get();
 
             foreach ($items as $item) {
-                // Book quantity = sum of active batch quantities for THIS warehouse, not item.quantity globally
                 if (! empty($validated['warehouse_id'])) {
                     $bookQty = (float) ItemBatch::where('item_id', $item->id)
                         ->where('warehouse_id', $validated['warehouse_id'])
@@ -127,7 +140,7 @@ class InventoryAuditController extends Controller
                     'inventory_audit_id'  => $audit->id,
                     'item_id'             => $item->id,
                     'book_quantity'        => $bookQty,
-                    'counted_quantity'     => $bookQty,    // Default: counted = book (auditor will adjust)
+                    'counted_quantity'     => $bookQty,
                     'discrepancy_quantity' => 0,
                     'unit_cost'            => (float) ($item->purchase_price ?: 0),
                     'discrepancy_value'    => 0,
@@ -146,11 +159,7 @@ class InventoryAuditController extends Controller
 
     public function show(Request $request, InventoryAudit $audit): View
     {
-        $user = $request->user();
-
-        if (! $user->isAdmin() && $user->department_id && $audit->department_id !== $user->department_id) {
-            abort(403, __('غير مسموح لك باستعراض جرد أقسام أخرى.'));
-        }
+        Gate::authorize('view', $audit);
 
         $audit->load(['warehouse', 'department', 'auditor', 'approver', 'items.item.primaryUnit']);
 
@@ -159,19 +168,7 @@ class InventoryAuditController extends Controller
 
     public function updateCounts(Request $request, InventoryAudit $audit): RedirectResponse
     {
-        $user = $request->user();
-
-        if (! $user->canPerformAudit()) {
-            abort(403, __('ليس لديك صلاحية لتعديل نتائج الجرد.'));
-        }
-
-        if (! $user->isAdmin() && $user->department_id && $audit->department_id !== $user->department_id) {
-            abort(403, __('غير مسموح لك بإدخال نتائج جرد لأقسام أخرى.'));
-        }
-
-        if ($audit->status === 'reconciled') {
-            return back()->with('error', __('لا يمكن تعديل جرد تمت تسويته واعتماده سابقاً.'));
-        }
+        Gate::authorize('count', $audit);
 
         $validated = $request->validate([
             'counts'                    => ['required', 'array'],
@@ -181,11 +178,8 @@ class InventoryAuditController extends Controller
         ]);
 
         DB::transaction(function () use ($validated, $audit) {
-            // Collect the IDs being submitted
             $submittedIds = array_column($validated['counts'], 'id');
 
-            // Critical: verify every submitted ID actually belongs to THIS audit, not another one.
-            // This prevents a malicious or erroneous request from modifying another audit's data.
             $validIds = InventoryAuditItem::where('inventory_audit_id', $audit->id)
                 ->whereIn('id', $submittedIds)
                 ->pluck('id')
@@ -198,9 +192,9 @@ class InventoryAuditController extends Controller
 
             foreach ($validated['counts'] as $countData) {
                 $auditItem = InventoryAuditItem::findOrFail($countData['id']);
-                $book      = (float) $auditItem->book_quantity;
-                $counted   = (float) $countData['counted_quantity'];
-                $diff      = $counted - $book;
+                $book = (float) $auditItem->book_quantity;
+                $counted = (float) $countData['counted_quantity'];
+                $diff = $counted - $book;
                 $diffValue = round($diff * (float) $auditItem->unit_cost, 2);
 
                 $status = match (true) {
@@ -226,23 +220,10 @@ class InventoryAuditController extends Controller
 
     public function reconcile(Request $request, InventoryAudit $audit): RedirectResponse
     {
-        $user = $request->user();
-
-        if (! $user->canPerformAudit() || $user->isIntakeWorker()) {
-            abort(403, __('تسوية نتائج الجرد مقتصرة على عامل الجرد والفرز ورئيس القسم والمدير العام.'));
-        }
-
-        if (! $user->isAdmin() && $user->department_id && $audit->department_id !== $user->department_id) {
-            abort(403, __('غير مسموح لك بتسوية جرد أقسام أخرى.'));
-        }
-
-        if ($audit->status === 'reconciled') {
-            return back()->with('error', __('هذا الجرد تمت تسويته بالفعل.'));
-        }
+        Gate::authorize('approve', $audit);
 
         try {
             DB::transaction(function () use ($request, $audit) {
-                // Lock the audit row to prevent concurrent reconciliation
                 $locked = InventoryAudit::where('id', $audit->id)->lockForUpdate()->firstOrFail();
 
                 if ($locked->status === 'reconciled') {
@@ -263,12 +244,8 @@ class InventoryAuditController extends Controller
 
                     $item = Item::where('id', $itemRecord->item_id)->lockForUpdate()->firstOrFail();
 
-                    // IMPORTANT: if this is a warehouse-scoped audit, we must NOT overwrite
-                    // the item's global quantity with the single-warehouse counted value.
-                    // Instead we apply only the DELTA to both the global quantity and the batches.
                     if ($locked->warehouse_id) {
                         if ($diff > 0) {
-                            // Surplus: create a new adjustment batch in this warehouse
                             ItemBatch::create([
                                 'item_id'           => $item->id,
                                 'warehouse_id'      => $locked->warehouse_id,
@@ -280,15 +257,11 @@ class InventoryAuditController extends Controller
                             ]);
                             $item->increment('quantity', $diff);
                         } else {
-                            // Shortage: deduct from this warehouse's batches only
                             $shortageQty = abs($diff);
-                            // Use allocateOutboundStock to deduct from the correct batches
-                            // Suppress DomainException here — if batches ran out, apply what we can
                             try {
                                 $this->valuationService->allocateOutboundStock($item, $shortageQty, $locked->warehouse_id);
                                 $item->decrement('quantity', $shortageQty);
                             } catch (\DomainException) {
-                                // If batch stock was less than requested shortage, deplete whatever is left in this warehouse
                                 $batches = ItemBatch::where('item_id', $item->id)
                                     ->where('warehouse_id', $locked->warehouse_id)
                                     ->where('status', 'active')
@@ -303,7 +276,6 @@ class InventoryAuditController extends Controller
                             }
                         }
                     } else {
-                        // Global audit (no warehouse scope): synchronize both item quantity and batches
                         if ($diff > 0) {
                             ItemBatch::create([
                                 'item_id'           => $item->id,
@@ -360,5 +332,4 @@ class InventoryAuditController extends Controller
         return redirect()->route('audits.show', $audit)
             ->with('success', __('تمت تسوية الفروقات وتعديل أرصدة المخزون بنجاح.'));
     }
-
 }

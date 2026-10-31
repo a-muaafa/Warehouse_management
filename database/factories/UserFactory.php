@@ -30,10 +30,60 @@ class UserFactory extends Factory
             'email' => fake()->unique()->safeEmail(),
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),
+            'role' => 'storekeeper',
             'worker_type' => 'intake',
             'is_active' => true,
             'remember_token' => Str::random(10),
         ];
+    }
+
+    public function superAdmin(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => 'super_admin',
+        ]);
+    }
+
+    public function warehouseManager(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => 'warehouse_manager',
+        ]);
+    }
+
+    public function inventoryManager(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => 'inventory_manager',
+        ]);
+    }
+
+    public function storekeeper(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => 'storekeeper',
+        ]);
+    }
+
+    public function stockCounter(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => 'stock_counter',
+        ]);
+    }
+
+    public function auditor(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => 'auditor',
+        ]);
+    }
+
+    public function viewer(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => 'viewer',
+        ]);
     }
 
     /**

@@ -89,8 +89,8 @@ class InventoryApiController extends Controller
     {
         $validated = $request->validate([
             'barcode'         => ['required', 'string', 'exists:items,barcode'],
-            'warehouse_id'    => ['required_without:warehouse_code', 'nullable', 'integer', 'exists:warehouses,id'],
-            'warehouse_code'  => ['required_without:warehouse_id', 'nullable', 'string', 'exists:warehouses,code'],
+            'warehouse_id'    => ['nullable', 'integer', 'exists:warehouses,id'],
+            'warehouse_code'  => ['nullable', 'string', 'exists:warehouses,code'],
             'type'            => ['required', 'in:in,out'],
             'quantity'        => ['required', 'numeric', 'min:0.001'],
             'unit_price'      => ['nullable', 'numeric', 'min:0'],

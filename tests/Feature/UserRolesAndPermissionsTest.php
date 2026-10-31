@@ -51,6 +51,20 @@ class UserRolesAndPermissionsTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_failed_login_is_logged_in_activity_logs(): void
+    {
+        $response = $this->post('/login', [
+            'username' => 'nonexistent_user',
+            'password' => 'wrong_password',
+        ]);
+
+        $response->assertSessionHasErrors('username');
+        $this->assertDatabaseHas('activity_logs', [
+            'user_name' => 'nonexistent_user',
+            'action' => 'فشل تسجيل الدخول',
+        ]);
+    }
+
     public function test_supervisor_cannot_manage_workers_from_another_department(): void
     {
         $foodDept = Department::create(['name' => 'قسم الأغذية']);
@@ -111,7 +125,7 @@ class UserRolesAndPermissionsTest extends TestCase
             'quantity' => 5,
         ]);
 
-        $response->assertSessionHas('error');
+        $response->assertStatus(403);
     }
 
     public function test_admin_can_view_activity_logs(): void

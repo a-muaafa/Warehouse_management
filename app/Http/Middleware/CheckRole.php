@@ -18,7 +18,6 @@ class CheckRole
         }
 
         // Always reject disabled accounts, even if their session is still active.
-        // This catches accounts that were deactivated after they had already logged in.
         if (! $user->is_active) {
             Auth::logout();
             $request->session()->invalidate();
@@ -28,15 +27,37 @@ class CheckRole
                 ->withErrors(['username' => __('تم تعطيل حسابك. يرجى التواصل مع المسؤول.')]);
         }
 
-        // Admin always has full access
-        if ($user->isAdmin()) {
+        // Super Admin always has full access
+        if ($user->isSuperAdmin()) {
             return $next($request);
         }
 
-        if (! in_array($user->role, $roles)) {
-            abort(403, 'Unauthorized action.');
+        // Check explicit role match
+        if (in_array($user->role, $roles, true)) {
+            return $next($request);
         }
 
-        return $next($request);
+        // Check role aliases for legacy compatibility
+        $hasCompatibleRole = false;
+        foreach ($roles as $role) {
+            if ($role === 'admin' && $user->isAdmin()) {
+                $hasCompatibleRole = true;
+                break;
+            }
+            if ($role === 'supervisor' && $user->isSupervisor()) {
+                $hasCompatibleRole = true;
+                break;
+            }
+            if ($role === 'worker' && $user->isWorker()) {
+                $hasCompatibleRole = true;
+                break;
+            }
+        }
+
+        if ($hasCompatibleRole) {
+            return $next($request);
+        }
+
+        abort(403, 'Unauthorized action.');
     }
 }

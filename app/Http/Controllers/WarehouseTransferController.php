@@ -13,6 +13,7 @@ use App\Services\InventoryValuationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class WarehouseTransferController extends Controller
@@ -21,25 +22,55 @@ class WarehouseTransferController extends Controller
         protected InventoryValuationService $valuationService
     ) {}
 
-    public function index(): View
+    public function index(Request $request): View
     {
-        $transfers = WarehouseTransfer::with(['fromWarehouse', 'toWarehouse', 'requester', 'items.item'])
-            ->latest()
-            ->paginate(15);
+        Gate::authorize('viewAny', WarehouseTransfer::class);
+
+        $user = $request->user();
+        $query = WarehouseTransfer::with(['fromWarehouse', 'toWarehouse', 'requester', 'items.item']);
+
+        if (! $user->isSuperAdmin()) {
+            $accessibleIds = $user->accessibleWarehouseIds();
+            $query->where(function ($q) use ($accessibleIds, $user) {
+                $q->whereIn('from_warehouse_id', $accessibleIds)
+                    ->orWhereIn('to_warehouse_id', $accessibleIds)
+                    ->orWhere('requested_by', $user->id);
+            });
+        }
+
+        $transfers = $query->latest()->paginate(15);
 
         return view('transfers.index', compact('transfers'));
     }
 
-    public function create(): View
+    public function create(Request $request): View
     {
-        $warehouses = Warehouse::where('is_active', true)->get();
-        $items      = Item::where('quantity', '>', 0)->with('primaryUnit')->get();
+        Gate::authorize('create', WarehouseTransfer::class);
 
-        return view('transfers.create', compact('warehouses', 'items'));
+        $user = $request->user();
+        $warehousesQuery = Warehouse::where('is_active', true);
+
+        if (! $user->isSuperAdmin()) {
+            $warehousesQuery->whereIn('id', $user->accessibleWarehouseIds());
+        }
+
+        $sourceWarehouses = $warehousesQuery->get();
+        $allWarehouses = Warehouse::where('is_active', true)->get();
+        $items = Item::where('quantity', '>', 0)->with('primaryUnit')->get();
+
+        return view('transfers.create', [
+            'warehouses' => $allWarehouses,
+            'sourceWarehouses' => $sourceWarehouses,
+            'items' => $items,
+        ]);
     }
 
     public function store(Request $request): RedirectResponse
     {
+        Gate::authorize('create', WarehouseTransfer::class);
+
+        $user = $request->user();
+
         $validated = $request->validate([
             'from_warehouse_id'      => ['required', 'integer', 'exists:warehouses,id', 'different:to_warehouse_id'],
             'to_warehouse_id'        => ['required', 'integer', 'exists:warehouses,id'],
@@ -49,7 +80,12 @@ class WarehouseTransferController extends Controller
             'items.*.quantity'       => ['required', 'numeric', 'min:0.001'],
         ]);
 
-        // Server-side: source ≠ destination (belt-and-suspenders on top of 'different' rule)
+        // Server-side warehouse authorization check
+        if (! $user->canAccessWarehouse((int) $validated['from_warehouse_id'])) {
+            abort(403, __('غير مصرح لك بإنشاء تحويل من مستودع لا يقع ضمن صلاحياتك.'));
+        }
+
+        // Server-side: source ≠ destination
         if ($validated['from_warehouse_id'] === $validated['to_warehouse_id']) {
             return back()->withErrors(['to_warehouse_id' => __('مستودع الوجهة يجب أن يختلف عن مستودع المصدر.')]);
         }
@@ -66,8 +102,8 @@ class WarehouseTransferController extends Controller
 
                 // Validate that each item actually has sufficient stock in the SOURCE warehouse
                 foreach ($validated['items'] as $itemData) {
-                    $item             = Item::findOrFail($itemData['item_id']);
-                    $requestedQty     = (float) $itemData['quantity'];
+                    $item = Item::findOrFail($itemData['item_id']);
+                    $requestedQty = (float) $itemData['quantity'];
 
                     $availableInSource = (float) ItemBatch::where('item_id', $item->id)
                         ->where('warehouse_id', $fromWarehouseId)
@@ -118,6 +154,8 @@ class WarehouseTransferController extends Controller
 
     public function show(WarehouseTransfer $transfer): View
     {
+        Gate::authorize('view', $transfer);
+
         $transfer->load(['fromWarehouse', 'toWarehouse', 'requester', 'dispatcher', 'receiver', 'items.item', 'items.batch']);
 
         return view('transfers.show', compact('transfer'));
@@ -129,6 +167,8 @@ class WarehouseTransferController extends Controller
      */
     public function dispatchTransfer(Request $request, WarehouseTransfer $transfer): RedirectResponse
     {
+        Gate::authorize('dispatch', $transfer);
+
         if ($transfer->status !== 'pending') {
             return back()->with('error', __('لا يمكن إرسال التحويل في حالته الحالية.'));
         }
@@ -158,8 +198,8 @@ class WarehouseTransferController extends Controller
                     $item->decrement('quantity', (float) $transferItem->quantity);
 
                     // Use the actual weighted-average cost from allocated batches
-                    $totalCost    = collect($allocations)->sum('total_cost');
-                    $avgUnitCost  = (float) $transferItem->quantity > 0
+                    $totalCost = collect($allocations)->sum('total_cost');
+                    $avgUnitCost = (float) $transferItem->quantity > 0
                         ? $totalCost / (float) $transferItem->quantity
                         : (float) $transferItem->unit_cost;
 
@@ -199,6 +239,8 @@ class WarehouseTransferController extends Controller
      */
     public function receiveTransfer(Request $request, WarehouseTransfer $transfer): RedirectResponse
     {
+        Gate::authorize('receive', $transfer);
+
         if ($transfer->status !== 'in_transit') {
             return back()->with('error', __('فقط التحويلات قيد النقل يمكن استلامها.'));
         }
@@ -222,7 +264,6 @@ class WarehouseTransferController extends Controller
                 $receivedQtys = $request->input('received_quantities', []);
 
                 foreach ($locked->items as $transferItem) {
-                    // Use operator-entered quantity if provided, otherwise assume full quantity received
                     $receivedQty = isset($receivedQtys[$transferItem->id])
                         ? (float) $receivedQtys[$transferItem->id]
                         : (float) $transferItem->quantity;
@@ -233,7 +274,7 @@ class WarehouseTransferController extends Controller
                     $transferItem->update(['received_quantity' => $receivedQty]);
 
                     if ($receivedQty <= 0) {
-                        continue; // Nothing received for this line — skip batch/transaction creation
+                        continue;
                     }
 
                     $item = Item::where('id', $transferItem->item_id)->lockForUpdate()->firstOrFail();

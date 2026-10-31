@@ -23,12 +23,23 @@ class CheckApiScope
     {
         $tokenScope = $request->attributes->get('api_scope', 'read');
 
-        // write tokens can also satisfy read requirements
-        $allowed = match ($requiredScope) {
-            'read' => in_array($tokenScope, ['read', 'write']),
-            'write' => $tokenScope === 'write',
-            default => false,
-        };
+        // Check if user has token with abilities via Sanctum
+        $user = $request->user();
+        if ($user && method_exists($user, 'currentAccessToken') && $user->currentAccessToken()) {
+            $token = $user->currentAccessToken();
+            $allowed = match ($requiredScope) {
+                'read' => $token->can('read') || $token->can('write') || $token->can('*'),
+                'write' => $token->can('write') || $token->can('*'),
+                default => false,
+            };
+        } else {
+            // write tokens can also satisfy read requirements
+            $allowed = match ($requiredScope) {
+                'read' => in_array($tokenScope, ['read', 'write'], true),
+                'write' => $tokenScope === 'write',
+                default => false,
+            };
+        }
 
         if (! $allowed) {
             return response()->json([

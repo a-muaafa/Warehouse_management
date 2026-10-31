@@ -38,9 +38,9 @@ class Warehouse extends Model
         return $this->belongsTo(Department::class);
     }
 
-    public function users(): HasMany
+    public function users(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
     {
-        return $this->hasMany(User::class);
+        return $this->belongsToMany(User::class, 'warehouse_user')->withTimestamps();
     }
 
     public function batches(): HasMany

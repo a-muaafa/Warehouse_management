@@ -5,15 +5,11 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Laravel\Sanctum\PersonalAccessToken;
 
 /**
- * Authenticates external API requests via a pre-shared Bearer token.
- *
- * Token configuration lives in config/api.php under the 'tokens' key.
- * Each token entry defines its 'scope' ('read' or 'write') so downstream
- * middleware (CheckApiScope) can enforce capability-level access control.
- *
- * A missing or invalid token always returns 401 — no fallback to any user ID.
+ * Authenticates external API requests via Sanctum personal access tokens,
+ * with fallback to configured tokens.
  */
 class AuthApiToken
 {
@@ -28,6 +24,40 @@ class AuthApiToken
             ], 401);
         }
 
+        // 1. Check Sanctum Personal Access Token
+        $pat = PersonalAccessToken::findToken($providedToken);
+        if ($pat) {
+            if ($pat->expires_at && $pat->expires_at->isPast()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'API token has expired.',
+                ], 401);
+            }
+
+            $user = $pat->tokenable;
+            if ($user && ! $user->is_active) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User account is deactivated.',
+                ], 403);
+            }
+
+            if ($user) {
+                auth()->setUser($user);
+                $request->setUserResolver(fn () => $user);
+            }
+
+            $scope = ($pat->can('write') || $pat->can('*')) ? 'write' : 'read';
+            $request->attributes->set('api_token', [
+                'name' => $pat->name,
+                'scope' => $scope,
+            ]);
+            $request->attributes->set('api_scope', $scope);
+
+            return $next($request);
+        }
+
+        // 2. Check pre-shared config tokens (legacy fallback)
         $tokens = config('api.tokens', []);
         $matchedToken = null;
 
@@ -45,7 +75,6 @@ class AuthApiToken
             ], 401);
         }
 
-        // Attach the resolved token metadata to the request for downstream use
         $request->attributes->set('api_token', $matchedToken);
         $request->attributes->set('api_scope', $matchedToken['scope'] ?? 'read');
 

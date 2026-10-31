@@ -15,6 +15,7 @@ use App\Services\InventoryValuationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class TransactionController extends Controller
@@ -25,16 +26,24 @@ class TransactionController extends Controller
 
     public function index(Request $request): View
     {
+        Gate::authorize('viewAny', Transaction::class);
+
         $user = $request->user();
 
         $transactionsQuery = Transaction::with(['item.department', 'item.primaryUnit', 'user', 'warehouse', 'supplier', 'customer', 'documents']);
 
-        // Department isolation for non-admin users
-        if (! $user->isAdmin()) {
+        // Warehouse & department isolation for non-super-admin users
+        if (! $user->isSuperAdmin()) {
+            $accessibleWarehouseIds = $user->accessibleWarehouseIds();
+            if (! empty($accessibleWarehouseIds)) {
+                $transactionsQuery->where(function ($q) use ($accessibleWarehouseIds) {
+                    $q->whereIn('warehouse_id', $accessibleWarehouseIds)
+                        ->orWhereNull('warehouse_id');
+                });
+            }
+
             if ($user->department_id) {
                 $transactionsQuery->whereHas('item', fn ($sq) => $sq->where('department_id', $user->department_id));
-            } elseif ($user->isWorker()) {
-                $transactionsQuery->where('user_id', $user->id);
             }
         }
 
@@ -46,14 +55,19 @@ class TransactionController extends Controller
             ->latest()
             ->paginate(20);
 
-        // Filter items list by department for non-admin users
+        // Filter items list by department for non-super-admin users
         $itemsQuery = Item::query();
-        if (! $user->isAdmin() && $user->department_id) {
+        if (! $user->isSuperAdmin() && $user->department_id) {
             $itemsQuery->where('department_id', $user->department_id);
         }
         $items = $itemsQuery->orderBy('name')->get();
 
-        $warehouses = Warehouse::where('is_active', true)->get();
+        $warehousesQuery = Warehouse::where('is_active', true);
+        if (! $user->isSuperAdmin()) {
+            $warehousesQuery->whereIn('id', $user->accessibleWarehouseIds());
+        }
+        $warehouses = $warehousesQuery->get();
+
         $suppliers  = Supplier::where('is_active', true)->get();
         $customers  = Customer::where('is_active', true)->get();
         $units      = Unit::where('is_active', true)->get();
@@ -65,20 +79,7 @@ class TransactionController extends Controller
     {
         $user = $request->user();
 
-        // --- Permission checks ---
-        if ($user->isViewOnlyWorker()) {
-            return back()->with('error', __('حسابك مخصص للعرض فقط، لا يمكنك تسجيل عمليات إدخال أو صرف.'));
-        }
-
-        if ($user->isAuditorWorker()) {
-            return back()->with('error', __('حسابك مخصص للجرد والفرز، لا يمتلك صلاحية تسجيل الوارد والمنصرف المباشر.'));
-        }
-
-        if (! $user->canCreateTransactions()) {
-            return back()->with('error', __('ليس لديك صلاحية لإجراء حركات المخزون.'));
-        }
-
-        // --- Validation ---
+        // Validation
         $validated = $request->validate([
             'item_id'       => ['required', 'integer', 'exists:items,id'],
             'warehouse_id'  => ['nullable', 'integer', 'exists:warehouses,id'],
@@ -87,7 +88,6 @@ class TransactionController extends Controller
             'unit_id'       => ['nullable', 'integer', 'exists:units,id'],
             'type'          => ['required', 'in:in,out'],
             'movement_reason' => ['nullable', 'string', 'max:100'],
-            // Allow fractional quantities — policy: items decide their own precision
             'quantity'      => ['required', 'numeric', 'min:0.001'],
             'unit_price'    => ['nullable', 'numeric', 'min:0'],
             'batch_number'  => ['nullable', 'string', 'max:100'],
@@ -98,10 +98,26 @@ class TransactionController extends Controller
             'notes'         => ['nullable', 'string', 'max:500'],
         ]);
 
+        // Permission checks based on type
+        if ($validated['type'] === 'in') {
+            if (! $user->hasPermission('stock.receive')) {
+                abort(403, __('ليس لديك صلاحية لتسجيل عمليات التوريد (الوارد).'));
+            }
+        } else {
+            if (! $user->hasPermission('stock.issue')) {
+                abort(403, __('ليس لديك صلاحية لتسجيل عمليات الصرف (المنصرف).'));
+            }
+        }
+
+        // Warehouse-level access check
+        if (! empty($validated['warehouse_id']) && ! $user->canAccessWarehouse((int) $validated['warehouse_id'])) {
+            abort(403, __('غير مصرح لك بإجراء حركات في مستودع لا يقع ضمن صلاحياتك.'));
+        }
+
         $item = Item::findOrFail($validated['item_id']);
 
-        // Department isolation: non-admin users can only operate on their department's items
-        if (! $user->isAdmin() && $user->department_id && $item->department_id !== $user->department_id) {
+        // Department isolation: non-super-admin users can only operate on their department's items
+        if (! $user->isSuperAdmin() && $user->department_id && $item->department_id !== $user->department_id) {
             return back()->with('error', __('غير مسموح لك بإجراء عمليات على أصناف تابعة لأقسام أخرى.'));
         }
 
@@ -110,7 +126,6 @@ class TransactionController extends Controller
 
         if (! empty($validated['unit_id'])) {
             $selectedUnit = Unit::find($validated['unit_id']);
-            // Ensure the unit actually belongs to this item (primary or secondary)
             $isValidUnit = $selectedUnit && in_array($selectedUnit->id, array_filter([
                 $item->unit_id,
                 $item->secondary_unit_id,
@@ -130,29 +145,24 @@ class TransactionController extends Controller
 
         try {
             $transactionResult = DB::transaction(function () use ($validated, $item, $qty, $unitPrice, $request, $user) {
-                // Lock the item row to prevent concurrent quantity modifications
                 $lockedItem = Item::where('id', $item->id)->lockForUpdate()->firstOrFail();
 
                 if ($validated['type'] === 'out') {
-                    // Re-check balance against the locked row
                     if ((float) $lockedItem->quantity < $qty) {
                         throw new \DomainException(
                             __('الكمية المتوفرة بالمخزون غير كافية. المتوفر: :qty', ['qty' => $lockedItem->quantity])
                         );
                     }
 
-                    // Allocate from batches — throws DomainException if insufficient
                     $this->valuationService->allocateOutboundStock(
                         $lockedItem,
                         $qty,
                         $validated['warehouse_id'] ?? null
                     );
 
-                    // Decrement as float, preserving fractional precision
                     $lockedItem->decrement('quantity', $qty);
                     $batchId = null;
                 } else {
-                    // Inbound: create a new batch
                     $batchNumber = ! empty($validated['batch_number'])
                         ? $validated['batch_number']
                         : 'LOT-'.date('Ymd').'-'.strtoupper(uniqid());
@@ -171,7 +181,6 @@ class TransactionController extends Controller
                     ]);
                     $batchId = $batch->id;
 
-                    // Increment as float — no silent (int) cast
                     $lockedItem->increment('quantity', $qty);
 
                     if ($unitPrice > 0) {
@@ -199,7 +208,6 @@ class TransactionController extends Controller
                     'status'          => 'completed',
                 ]);
 
-                // Link supporting movement document when reference number provided
                 if (! empty($validated['reference_doc'])) {
                     MovementDocument::create([
                         'transaction_id' => $transaction->id,
