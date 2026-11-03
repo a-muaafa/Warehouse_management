@@ -3,25 +3,43 @@
 namespace App\Services;
 
 use App\Models\Item;
+use App\Models\ItemBatch;
 use App\Models\Warehouse;
 
 class HoldingCostCalculatorService
 {
     /**
-     * Compute estimated monthly and annual storage holding cost for an item or entire warehouse
+     * Compute estimated monthly and annual storage holding cost for an item
+     * (optionally scoped to a specific warehouse).
      *
      * @return array{monthly_cost: float, annual_cost: float, space_cost: float, capital_cost: float}
      */
-    public function calculateItemHoldingCost(Item $item, float $annualInterestRate = 0.10): array
+    public function calculateItemHoldingCost(Item $item, float $annualInterestRate = 0.10, ?int $warehouseId = null): array
     {
-        // Capital carrying cost = total valuation * annual rate / 12
-        $unitVal = (float) ($item->purchase_price ?: 0);
-        $totalStockValue = $item->quantity * $unitVal;
+        $batchQuery = ItemBatch::where('item_id', $item->id)
+            ->where('status', 'active')
+            ->where('quantity_remaining', '>', 0);
+
+        if ($warehouseId) {
+            $batchQuery->where('warehouse_id', $warehouseId);
+        }
+
+        $batches = $batchQuery->get();
+
+        if ($batches->isNotEmpty()) {
+            $quantity = (float) $batches->sum(fn ($b) => (float) $b->quantity_remaining);
+            $totalStockValue = (float) $batches->sum(fn ($b) => (float) $b->quantity_remaining * (float) $b->purchase_cost);
+        } elseif ($warehouseId === null) {
+            $quantity = (float) $item->quantity;
+            $unitVal = (float) ($item->purchase_price ?: 0);
+            $totalStockValue = $quantity * $unitVal;
+        } else {
+            $quantity = 0.0;
+            $totalStockValue = 0.0;
+        }
+
         $monthlyCapitalCost = ($totalStockValue * $annualInterestRate) / 12;
-
-        // Physical space storage cost rate
-        $monthlySpaceCost = $item->quantity * (float) ($item->storage_cost_rate ?: 0.50);
-
+        $monthlySpaceCost = $quantity * (float) ($item->storage_cost_rate ?: 0.50);
         $totalMonthlyCost = $monthlyCapitalCost + $monthlySpaceCost;
 
         return [
@@ -33,7 +51,7 @@ class HoldingCostCalculatorService
     }
 
     /**
-     * Compute total warehouse holding cost across all inventory
+     * Compute total warehouse holding cost across all inventory in that warehouse.
      *
      * @return array{total_monthly_holding: float, total_annual_holding: float, warehouse_overhead_monthly: float}
      */
@@ -41,9 +59,9 @@ class HoldingCostCalculatorService
     {
         $items = Item::whereHas('batches', fn ($q) => $q->where('warehouse_id', $warehouse->id)->where('status', 'active'))->get();
 
-        $monthlyHolding = 0;
+        $monthlyHolding = 0.0;
         foreach ($items as $item) {
-            $calc = $this->calculateItemHoldingCost($item);
+            $calc = $this->calculateItemHoldingCost($item, 0.10, $warehouse->id);
             $monthlyHolding += $calc['monthly_cost'];
         }
 

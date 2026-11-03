@@ -7,10 +7,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Item extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'name',
@@ -22,7 +23,7 @@ class Item extends Model
         'quantity',
         'purchase_price',
         'selling_price',
-        'valuation_method', // fifo, lifo, avg
+        'valuation_method', // fifo, lifo, fefo, avg
         'min_alert_level',
         'reorder_point',
         'safety_stock',
@@ -32,13 +33,34 @@ class Item extends Model
         'description',
         'department_id',
         'category_id',
+        'created_by',
+        'updated_by',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $model) {
+            if (auth()->check() && ! $model->created_by) {
+                $model->created_by = auth()->id();
+            }
+        });
+
+        static::updating(function (self $model) {
+            if (auth()->check()) {
+                $model->updated_by = auth()->id();
+            }
+        });
+    }
 
     protected function casts(): array
     {
         return [
-            'purchase_price' => 'decimal:2',
-            'selling_price' => 'decimal:2',
+            'quantity' => 'decimal:4',
+            'min_alert_level' => 'decimal:4',
+            'reorder_point' => 'decimal:4',
+            'safety_stock' => 'decimal:4',
+            'purchase_price' => 'decimal:4',
+            'selling_price' => 'decimal:4',
             'storage_cost_rate' => 'decimal:2',
             'is_perishable' => 'boolean',
         ];
@@ -82,6 +104,11 @@ class Item extends Model
     public function transferItems(): HasMany
     {
         return $this->hasMany(TransferItem::class);
+    }
+
+    public function movements(): HasMany
+    {
+        return $this->hasMany(InventoryMovement::class);
     }
 
     public function isLowStock(): bool

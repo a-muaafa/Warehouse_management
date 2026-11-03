@@ -26,15 +26,17 @@ class TransactionIntegrityTest extends TestCase
     use RefreshDatabase;
 
     private Department $dept;
+
     private Warehouse $warehouse;
+
     private User $admin;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->dept      = Department::create(['name' => 'Test Dept']);
+        $this->dept = Department::create(['name' => 'Test Dept']);
         $this->warehouse = Warehouse::create(['name' => 'Main WH', 'code' => 'WH-001']);
-        $this->admin     = User::factory()->create(['role' => 'admin', 'department_id' => $this->dept->id]);
+        $this->admin = User::factory()->create(['role' => 'admin', 'department_id' => $this->dept->id]);
     }
 
     // -----------------------------------------------------------------------
@@ -46,10 +48,10 @@ class TransactionIntegrityTest extends TestCase
         $item = Item::factory()->create(['department_id' => $this->dept->id, 'quantity' => 0]);
 
         $response = $this->actingAs($this->admin)->post('/transactions', [
-            'item_id'      => $item->id,
+            'item_id' => $item->id,
             'warehouse_id' => $this->warehouse->id,
-            'type'         => 'in',
-            'quantity'     => 2.5,
+            'type' => 'in',
+            'quantity' => 2.5,
         ]);
 
         $response->assertSessionHasNoErrors();
@@ -61,20 +63,20 @@ class TransactionIntegrityTest extends TestCase
         $item = Item::factory()->create(['department_id' => $this->dept->id, 'quantity' => 10]);
 
         ItemBatch::create([
-            'item_id'           => $item->id,
-            'warehouse_id'      => $this->warehouse->id,
-            'batch_number'      => 'LOT-FRAC',
-            'purchase_cost'     => 5.00,
+            'item_id' => $item->id,
+            'warehouse_id' => $this->warehouse->id,
+            'batch_number' => 'LOT-FRAC',
+            'purchase_cost' => 5.00,
             'quantity_received' => 10,
-            'quantity_remaining'=> 10,
-            'status'            => 'active',
+            'quantity_remaining' => 10,
+            'status' => 'active',
         ]);
 
         $response = $this->actingAs($this->admin)->post('/transactions', [
-            'item_id'      => $item->id,
+            'item_id' => $item->id,
             'warehouse_id' => $this->warehouse->id,
-            'type'         => 'out',
-            'quantity'     => 3.75,
+            'type' => 'out',
+            'quantity' => 3.75,
         ]);
 
         $response->assertSessionHasNoErrors();
@@ -91,20 +93,20 @@ class TransactionIntegrityTest extends TestCase
 
         // Item says 100 globally but only 5 in batches — allocation should fail
         ItemBatch::create([
-            'item_id'           => $item->id,
-            'warehouse_id'      => $this->warehouse->id,
-            'batch_number'      => 'LOT-SMALL',
-            'purchase_cost'     => 10.00,
+            'item_id' => $item->id,
+            'warehouse_id' => $this->warehouse->id,
+            'batch_number' => 'LOT-SMALL',
+            'purchase_cost' => 10.00,
             'quantity_received' => 5,
-            'quantity_remaining'=> 5,
-            'status'            => 'active',
+            'quantity_remaining' => 5,
+            'status' => 'active',
         ]);
 
         $response = $this->actingAs($this->admin)->post('/transactions', [
-            'item_id'      => $item->id,
+            'item_id' => $item->id,
             'warehouse_id' => $this->warehouse->id,
-            'type'         => 'out',
-            'quantity'     => 20, // More than batch stock
+            'type' => 'out',
+            'quantity' => 20, // More than batch stock
         ]);
 
         $response->assertSessionHasErrors('quantity');
@@ -118,8 +120,8 @@ class TransactionIntegrityTest extends TestCase
         $item = Item::factory()->create(['department_id' => $this->dept->id, 'quantity' => 3]);
 
         $response = $this->actingAs($this->admin)->post('/transactions', [
-            'item_id'  => $item->id,
-            'type'     => 'out',
+            'item_id' => $item->id,
+            'type' => 'out',
             'quantity' => 50,
         ]);
 
@@ -136,21 +138,21 @@ class TransactionIntegrityTest extends TestCase
         $item = Item::factory()->create(['department_id' => $this->dept->id, 'quantity' => 5]);
 
         $batch = ItemBatch::create([
-            'item_id'           => $item->id,
-            'warehouse_id'      => $this->warehouse->id,
-            'batch_number'      => 'LOT-ATOMIC',
-            'purchase_cost'     => 10.00,
+            'item_id' => $item->id,
+            'warehouse_id' => $this->warehouse->id,
+            'batch_number' => 'LOT-ATOMIC',
+            'purchase_cost' => 10.00,
             'quantity_received' => 5,
-            'quantity_remaining'=> 5,
-            'status'            => 'active',
+            'quantity_remaining' => 5,
+            'status' => 'active',
         ]);
 
         // Try to take 10 from a batch that only has 5
         $this->actingAs($this->admin)->post('/transactions', [
-            'item_id'      => $item->id,
+            'item_id' => $item->id,
             'warehouse_id' => $this->warehouse->id,
-            'type'         => 'out',
-            'quantity'     => 10,
+            'type' => 'out',
+            'quantity' => 10,
         ]);
 
         // Batch must still have 5 — no partial deduction
@@ -165,38 +167,38 @@ class TransactionIntegrityTest extends TestCase
     public function test_fifo_deducts_oldest_batch_first(): void
     {
         $item = Item::factory()->create([
-            'department_id'    => $this->dept->id,
-            'quantity'         => 50,
+            'department_id' => $this->dept->id,
+            'quantity' => 50,
             'valuation_method' => 'fifo',
         ]);
 
         $oldBatch = ItemBatch::create([
-            'item_id'           => $item->id,
-            'warehouse_id'      => $this->warehouse->id,
-            'batch_number'      => 'OLD-LOT',
-            'purchase_cost'     => 10.00,
+            'item_id' => $item->id,
+            'warehouse_id' => $this->warehouse->id,
+            'batch_number' => 'OLD-LOT',
+            'purchase_cost' => 10.00,
             'quantity_received' => 20,
-            'quantity_remaining'=> 20,
-            'status'            => 'active',
-            'created_at'        => now()->subDays(10),
+            'quantity_remaining' => 20,
+            'status' => 'active',
+            'created_at' => now()->subDays(10),
         ]);
 
         $newBatch = ItemBatch::create([
-            'item_id'           => $item->id,
-            'warehouse_id'      => $this->warehouse->id,
-            'batch_number'      => 'NEW-LOT',
-            'purchase_cost'     => 15.00,
+            'item_id' => $item->id,
+            'warehouse_id' => $this->warehouse->id,
+            'batch_number' => 'NEW-LOT',
+            'purchase_cost' => 15.00,
             'quantity_received' => 30,
-            'quantity_remaining'=> 30,
-            'status'            => 'active',
-            'created_at'        => now()->subDays(2),
+            'quantity_remaining' => 30,
+            'status' => 'active',
+            'created_at' => now()->subDays(2),
         ]);
 
         $this->actingAs($this->admin)->post('/transactions', [
-            'item_id'      => $item->id,
+            'item_id' => $item->id,
             'warehouse_id' => $this->warehouse->id,
-            'type'         => 'out',
-            'quantity'     => 25,
+            'type' => 'out',
+            'quantity' => 25,
         ]);
 
         // Old batch (20) should be fully depleted, new batch takes 5
@@ -215,12 +217,12 @@ class TransactionIntegrityTest extends TestCase
         $item = Item::factory()->create(['department_id' => $dept->id, 'quantity' => 100]);
 
         ItemBatch::create([
-            'item_id'           => $item->id,
-            'batch_number'      => 'LOT-SVC',
-            'purchase_cost'     => 5.00,
+            'item_id' => $item->id,
+            'batch_number' => 'LOT-SVC',
+            'purchase_cost' => 5.00,
             'quantity_received' => 3,
-            'quantity_remaining'=> 3,
-            'status'            => 'active',
+            'quantity_remaining' => 3,
+            'status' => 'active',
         ]);
 
         $service = new InventoryValuationService;
@@ -235,12 +237,12 @@ class TransactionIntegrityTest extends TestCase
         $item = Item::factory()->create(['department_id' => $dept->id, 'quantity' => 5]);
 
         $batch = ItemBatch::create([
-            'item_id'           => $item->id,
-            'batch_number'      => 'LOT-PARTIAL',
-            'purchase_cost'     => 5.00,
+            'item_id' => $item->id,
+            'batch_number' => 'LOT-PARTIAL',
+            'purchase_cost' => 5.00,
             'quantity_received' => 5,
-            'quantity_remaining'=> 5,
-            'status'            => 'active',
+            'quantity_remaining' => 5,
+            'status' => 'active',
         ]);
 
         $service = new InventoryValuationService;
@@ -263,27 +265,27 @@ class TransactionIntegrityTest extends TestCase
     public function test_view_only_worker_cannot_create_outbound_transaction(): void
     {
         $worker = User::factory()->create([
-            'role'          => 'worker',
-            'worker_type'   => 'view_only',
+            'role' => 'worker',
+            'worker_type' => 'view_only',
             'department_id' => $this->dept->id,
         ]);
 
         $item = Item::factory()->create(['department_id' => $this->dept->id, 'quantity' => 50]);
 
         $response = $this->actingAs($worker)->post('/transactions', [
-            'item_id'  => $item->id,
-            'type'     => 'out',
+            'item_id' => $item->id,
+            'type' => 'out',
             'quantity' => 10,
         ]);
 
-        $response->assertSessionHas('error');
+        $response->assertStatus(403);
         $this->assertEquals(50, (float) $item->fresh()->quantity);
     }
 
     public function test_disabled_user_is_refused_by_role_middleware(): void
     {
         $disabledAdmin = User::factory()->create([
-            'role'      => 'admin',
+            'role' => 'admin',
             'is_active' => false,
         ]);
 

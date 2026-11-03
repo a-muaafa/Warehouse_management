@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: Warehouse Management System (WMS) REST API
+  description: |
+    واجهة برمجة التطبيقات الرسمية لنظام إدارة المستودعات والمخزون (WMS) للتكامل مع أنظمة تخطيط موارد المؤسسات (ERP) والأنظمة المحاسبية وتطبيقات الماسح الضوئي.
+  version: 1.0.0
+servers:
+  - url: /api/v1
+    description: API v1 Server
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Sanctum Personal Access Token or configured ERP API Token
+  schemas:
+    StandardSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+        data:
+          type: object
+    StandardErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+          example: null
+security:
+  - BearerAuth: []
+paths:
+  /stock-balances:
+    get:
+      summary: استعراض أرصدة المخزون الحالية مع التصفية والترتيب والتقسيم (Pagination)
+      tags:
+        - Inventory
+      parameters:
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: warehouse_id
+          in: query
+          schema:
+            type: integer
+        - name: category_id
+          in: query
+          schema:
+            type: integer
+        - name: low_stock
+          in: query
+          schema:
+            type: string
+            enum: ['0', '1']
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [name, quantity, purchase_price, selling_price, created_at]
+        - name: sort_dir
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: Paginated list of items and active batches
+        '401':
+          description: Unauthenticated
+  /items/barcode/{code}:
+    get:
+      summary: البحث عن صنف بواسطة الباركود أو رمز SKU
+      tags:
+        - Inventory
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Item details with active batches
+        '404':
+          description: Item not found
+  /valuation-summary:
+    get:
+      summary: ملخص تقييم المخزون (FIFO, Weighted Average, Actual Batch Cost)
+      tags:
+        - Valuation
+      parameters:
+        - name: warehouse_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Valuation summary breakdown
+  /transactions/external-sync:
+    post:
+      summary: تسجيل حركة مخزنية خارجية (وارد / منصرف) مع ربط الدفعات وسجل الحركات
+      tags:
+        - Transactions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - barcode
+                - type
+                - quantity
+                - movement_reason
+              properties:
+                barcode:
+                  type: string
+                  example: BAR-100200
+                warehouse_id:
+                  type: integer
+                  nullable: true
+                warehouse_code:
+                  type: string
+                  nullable: true
+                type:
+                  type: string
+                  enum: [in, out]
+                quantity:
+                  type: number
+                  format: float
+                  example: 15.5
+                unit_price:
+                  type: number
+                  format: float
+                  example: 25.00
+                movement_reason:
+                  type: string
+                  example: purchase
+                reference_doc:
+                  type: string
+                  example: PO-2026-0091
+                idempotency_key:
+                  type: string
+                  example: ERP-SYNC-99182
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Transaction created and synchronized
+        '403':
+          description: Insufficient API scope (requires write scope) or unauthorized warehouse
+        '422':
+          description: Validation error or insufficient stock
+

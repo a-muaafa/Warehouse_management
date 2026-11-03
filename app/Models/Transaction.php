@@ -5,11 +5,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Transaction extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'item_id',
@@ -25,16 +27,50 @@ class Transaction extends Model
         'unit_price',
         'total_amount',
         'reference_doc',
+        'idempotency_key',
         'notes',
         'approved_by',
         'status', // completed, pending_approval, cancelled
+        'created_by',
+        'updated_by',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $model) {
+            if (auth()->check() && ! $model->created_by) {
+                $model->created_by = auth()->id();
+            }
+        });
+
+        static::updating(function (self $model) {
+            if ($model->getOriginal('status') === 'completed') {
+                // Prevent altering core financial/quantity fields of a completed transaction
+                $immutableFields = ['item_id', 'warehouse_id', 'type', 'quantity'];
+                foreach ($immutableFields as $field) {
+                    if ($model->isDirty($field)) {
+                        throw new \DomainException('Completed inventory transactions cannot be directly modified; record a corrective adjustment instead.');
+                    }
+                }
+            }
+            if (auth()->check()) {
+                $model->updated_by = auth()->id();
+            }
+        });
+
+        static::deleting(function (self $model) {
+            if ($model->status === 'completed') {
+                throw new \DomainException('Cannot delete a completed transaction that has already affected stock balances.');
+            }
+        });
+    }
 
     protected function casts(): array
     {
         return [
-            'unit_price' => 'decimal:2',
-            'total_amount' => 'decimal:2',
+            'quantity' => 'decimal:4',
+            'unit_price' => 'decimal:4',
+            'total_amount' => 'decimal:4',
         ];
     }
 
@@ -81,6 +117,24 @@ class Transaction extends Model
     public function documents(): HasMany
     {
         return $this->hasMany(MovementDocument::class);
+    }
+
+    public function batchItems(): HasMany
+    {
+        return $this->hasMany(TransactionBatchItem::class);
+    }
+
+    public function batches(): BelongsToMany
+    {
+        return $this->belongsToMany(ItemBatch::class, 'transaction_batch_items')
+            ->withPivot(['quantity', 'unit_cost', 'total_cost'])
+            ->withTimestamps();
+    }
+
+    public function movements(): HasMany
+    {
+        return $this->hasMany(InventoryMovement::class, 'source_id')
+            ->where('source_type', self::class);
     }
 
     public function getMovementReasonDisplayNameAttribute(): string

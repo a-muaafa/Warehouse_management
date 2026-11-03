@@ -16,13 +16,18 @@ class TransferItem extends Model
         'item_batch_id',
         'quantity',
         'received_quantity',
+        'missing_quantity',
         'unit_cost',
+        'discrepancy_reason',
     ];
 
     protected function casts(): array
     {
         return [
-            'unit_cost' => 'decimal:2',
+            'quantity' => 'decimal:4',
+            'received_quantity' => 'decimal:4',
+            'missing_quantity' => 'decimal:4',
+            'unit_cost' => 'decimal:4',
         ];
     }
 

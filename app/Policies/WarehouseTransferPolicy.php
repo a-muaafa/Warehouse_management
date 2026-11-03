@@ -42,6 +42,22 @@ class WarehouseTransferPolicy
     }
 
     /**
+     * Determine whether the user can approve a transfer before dispatch.
+     */
+    public function approve(User $user, WarehouseTransfer $transfer): bool
+    {
+        if (! $user->hasPermission('transfers.approve')) {
+            return false;
+        }
+
+        if ($user->isSuperAdmin()) {
+            return true;
+        }
+
+        return $user->canAccessWarehouse($transfer->from_warehouse_id);
+    }
+
+    /**
      * Determine whether the user can dispatch the transfer from source warehouse.
      */
     public function dispatch(User $user, WarehouseTransfer $transfer): bool

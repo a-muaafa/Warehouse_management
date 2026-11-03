@@ -6,17 +6,20 @@ use App\Http\Controllers\Controller;
 use App\Models\Item;
 use App\Models\Transaction;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class ReportController extends Controller
 {
     public function index(Request $request): View
     {
+        Gate::authorize('reports.view');
+
         $user = $request->user();
         $departmentId = $user->department_id;
 
-        $transactions = Transaction::with(['item', 'user'])
-            ->whereHas('item', fn ($q) => $q->where('department_id', $departmentId))
+        $transactions = Transaction::with(['item', 'user', 'warehouse'])
+            ->when(! $user->isSuperAdmin() && $departmentId, fn ($q) => $q->whereHas('item', fn ($sq) => $sq->where('department_id', $departmentId)))
             ->when($request->filled('type'), fn ($q) => $q->where('type', $request->type))
             ->when($request->filled('date_from'), fn ($q) => $q->whereDate('created_at', '>=', $request->date_from))
             ->when($request->filled('date_to'), fn ($q) => $q->whereDate('created_at', '<=', $request->date_to))
@@ -24,14 +27,16 @@ class ReportController extends Controller
             ->latest()
             ->paginate(25);
 
-        $items = Item::where('department_id', $departmentId)->orderBy('name')->get();
+        $items = Item::when(! $user->isSuperAdmin() && $departmentId, fn ($q) => $q->where('department_id', $departmentId))
+            ->orderBy('name')
+            ->get();
 
         $summary = [
-            'total_in' => Transaction::whereHas('item', fn ($q) => $q->where('department_id', $departmentId))
+            'total_in' => Transaction::when(! $user->isSuperAdmin() && $departmentId, fn ($q) => $q->whereHas('item', fn ($sq) => $sq->where('department_id', $departmentId)))
                 ->where('type', 'in')->sum('quantity'),
-            'total_out' => Transaction::whereHas('item', fn ($q) => $q->where('department_id', $departmentId))
+            'total_out' => Transaction::when(! $user->isSuperAdmin() && $departmentId, fn ($q) => $q->whereHas('item', fn ($sq) => $sq->where('department_id', $departmentId)))
                 ->where('type', 'out')->sum('quantity'),
-            'low_stock_count' => Item::where('department_id', $departmentId)
+            'low_stock_count' => Item::when(! $user->isSuperAdmin() && $departmentId, fn ($q) => $q->where('department_id', $departmentId))
                 ->whereColumn('quantity', '<=', 'min_alert_level')->count(),
         ];
 
@@ -40,11 +45,13 @@ class ReportController extends Controller
 
     public function exportExcel(Request $request)
     {
+        Gate::authorize('reports.export');
+
         $user = $request->user();
         $departmentId = $user->department_id;
 
         $transactions = Transaction::with(['item', 'user'])
-            ->whereHas('item', fn ($q) => $q->where('department_id', $departmentId))
+            ->when(! $user->isSuperAdmin() && $departmentId, fn ($q) => $q->whereHas('item', fn ($sq) => $sq->where('department_id', $departmentId)))
             ->when($request->filled('type'), fn ($q) => $q->where('type', $request->type))
             ->when($request->filled('date_from'), fn ($q) => $q->whereDate('created_at', '>=', $request->date_from))
             ->when($request->filled('date_to'), fn ($q) => $q->whereDate('created_at', '<=', $request->date_to))

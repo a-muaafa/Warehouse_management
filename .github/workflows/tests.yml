@@ -1,0 +1,51 @@
+name: Laravel CI / Tests & Security Audit
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  tests:
+    name: PHPUnit, Pint & Dependency Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, xml, ctype, json, bcmath, pdo_sqlite
+          coverage: none
+
+      - name: Install Composer Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Check Code Formatting (Laravel Pint)
+        run: vendor/bin/pint --test
+
+      - name: Prepare Environment & SQLite Test Database
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          touch database/database.sqlite
+
+      - name: Run Database Migrations
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: database/database.sqlite
+        run: php artisan migrate --force --no-interaction
+
+      - name: Run Unit Tests
+        run: php artisan test --testsuite=Unit
+
+      - name: Run Feature Tests
+        run: php artisan test --testsuite=Feature
+
+      - name: Composer Security Audit
+        run: composer audit --no-interaction
+

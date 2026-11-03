@@ -11,6 +11,7 @@ use App\Models\Warehouse;
 use App\Services\HoldingCostCalculatorService;
 use App\Services\InventoryValuationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
@@ -24,24 +25,28 @@ class DashboardController extends Controller
     {
         $user = $request->user();
 
-        // 1. High-Level KPI Summary
-        $valuationData = $this->valuationService->getInventoryValuationSummary();
-        $totalHoldingCost = Item::all()->sum(fn ($item) => $this->holdingCostService->calculateItemHoldingCost($item)['monthly_cost']);
+        // 1. High-Level KPI Summary (Cached for 60s, invalidated on stock mutations)
+        $stats = Cache::remember('dashboard_kpis', 60, function () {
+            $valuationData = $this->valuationService->getInventoryValuationSummary();
+            $totalHoldingCost = Item::with('batches')->get()->sum(
+                fn ($item) => $this->holdingCostService->calculateItemHoldingCost($item)['monthly_cost']
+            );
 
-        $stats = [
-            'warehouses' => Warehouse::where('is_active', true)->count(),
-            'departments' => Department::count(),
-            'supervisors' => User::where('role', 'supervisor')->count(),
-            'workers' => User::where('role', 'worker')->count(),
-            'items' => Item::count(),
-            'total_valuation' => $valuationData['total_valuation'],
-            'total_holding_cost' => $totalHoldingCost,
-            'low_stock' => Item::whereColumn('quantity', '<=', 'min_alert_level')->count(),
-            'reorder_alerts' => Item::whereColumn('quantity', '<=', 'reorder_point')->count(),
-            'expiring_batches' => ItemBatch::expiringSoon(30)->count(),
-            'expired_batches' => ItemBatch::expired()->count(),
-            'transactions_today' => Transaction::whereDate('created_at', today())->count(),
-        ];
+            return [
+                'warehouses' => Warehouse::where('is_active', true)->count(),
+                'departments' => Department::count(),
+                'supervisors' => User::whereIn('role', ['supervisor', 'inventory_manager'])->count(),
+                'workers' => User::whereIn('role', ['worker', 'storekeeper', 'stock_counter', 'viewer'])->count(),
+                'items' => Item::count(),
+                'total_valuation' => $valuationData['total_valuation'],
+                'total_holding_cost' => round($totalHoldingCost, 2),
+                'low_stock' => Item::whereColumn('quantity', '<=', 'min_alert_level')->count(),
+                'reorder_alerts' => Item::whereColumn('quantity', '<=', 'reorder_point')->count(),
+                'expiring_batches' => ItemBatch::expiringSoon(30)->count(),
+                'expired_batches' => ItemBatch::expired()->count(),
+                'transactions_today' => Transaction::whereDate('created_at', today())->count(),
+            ];
+        });
 
         // 2. High-Turnover (Fast-Moving) Items: highest out volume in last 30 days
         $fastMovingItems = Item::with('primaryUnit', 'department')

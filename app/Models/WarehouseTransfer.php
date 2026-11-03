@@ -6,10 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class WarehouseTransfer extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'transfer_number',
@@ -17,19 +18,30 @@ class WarehouseTransfer extends Model
         'to_warehouse_id',
         'status',
         'requested_by',
+        'approved_by',
         'dispatched_by',
         'received_by',
+        'approved_at',
         'dispatched_at',
         'received_at',
         'notes',
+        'discrepancy_notes',
+        'created_by',
+        'updated_by',
     ];
 
     protected function casts(): array
     {
         return [
+            'approved_at' => 'datetime',
             'dispatched_at' => 'datetime',
             'received_at' => 'datetime',
         ];
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 
     public function fromWarehouse(): BelongsTo

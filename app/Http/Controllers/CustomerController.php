@@ -5,12 +5,15 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class CustomerController extends Controller
 {
     public function index(): View
     {
+        Gate::authorize('master_data.view');
+
         $customers = Customer::withCount('transactions')->latest()->paginate(15);
 
         return view('customers.index', compact('customers'));
@@ -18,11 +21,15 @@ class CustomerController extends Controller
 
     public function create(): View
     {
+        Gate::authorize('master_data.manage');
+
         return view('customers.create');
     }
 
     public function store(Request $request): RedirectResponse
     {
+        Gate::authorize('master_data.manage');
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'company_name' => 'nullable|string|max:255',
@@ -43,11 +50,15 @@ class CustomerController extends Controller
 
     public function edit(Customer $customer): View
     {
+        Gate::authorize('master_data.manage');
+
         return view('customers.edit', compact('customer'));
     }
 
     public function update(Request $request, Customer $customer): RedirectResponse
     {
+        Gate::authorize('master_data.manage');
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'company_name' => 'nullable|string|max:255',
@@ -68,6 +79,8 @@ class CustomerController extends Controller
 
     public function destroy(Customer $customer): RedirectResponse
     {
+        Gate::authorize('master_data.manage');
+
         if ($customer->transactions()->exists()) {
             return back()->with('error', __('Cannot delete customer associated with transactions.'));
         }

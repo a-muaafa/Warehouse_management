@@ -5,11 +5,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Warehouse extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'name',
@@ -22,6 +24,8 @@ class Warehouse extends Model
         'holding_cost_rate_per_day',
         'department_id',
         'is_active',
+        'created_by',
+        'updated_by',
     ];
 
     protected function casts(): array
@@ -38,7 +42,7 @@ class Warehouse extends Model
         return $this->belongsTo(Department::class);
     }
 
-    public function users(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    public function users(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'warehouse_user')->withTimestamps();
     }

@@ -17,6 +17,8 @@
                 </div>
                 @if($audit->status === 'reconciled')
                 <span class="badge badge-success">{{ __('Reconciled') }}</span>
+                @elseif($audit->status === 'pending_approval')
+                <span class="badge badge-info">{{ __('Pending Approval') }}</span>
                 @else
                 <span class="badge badge-warning">{{ __('In Progress') }}</span>
                 @endif

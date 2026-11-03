@@ -107,6 +107,23 @@ class User extends Authenticatable
     }
 
     /**
+     * Resolve effective role in the 7-role RBAC matrix (maps legacy roles).
+     */
+    public function effectiveRole(): string
+    {
+        return match ($this->role) {
+            'admin', 'super_admin' => 'super_admin',
+            'supervisor', 'inventory_manager' => 'inventory_manager',
+            'worker' => match ($this->worker_type) {
+                'auditor' => 'stock_counter',
+                'view_only' => 'viewer',
+                default => 'storekeeper',
+            },
+            default => $this->role,
+        };
+    }
+
+    /**
      * Check if user has a permission string based on role matrix.
      */
     public function hasPermission(string $permission): bool
@@ -119,7 +136,8 @@ class User extends Authenticatable
             return true;
         }
 
-        $permissions = config("permissions.roles.{$this->role}", []);
+        $effectiveRole = $this->effectiveRole();
+        $permissions = config("permissions.roles.{$effectiveRole}", []);
 
         return in_array($permission, $permissions, true) || in_array('*', $permissions, true);
     }

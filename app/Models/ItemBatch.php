@@ -7,15 +7,17 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ItemBatch extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'item_id',
         'warehouse_id',
         'supplier_id',
+        'transaction_id',
         'batch_number',
         'purchase_cost',
         'selling_price',
@@ -23,19 +25,41 @@ class ItemBatch extends Model
         'quantity_remaining',
         'manufacture_date',
         'expiry_date',
+        'received_at',
         'status',
         'storage_location',
+        'created_by',
+        'updated_by',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $model) {
+            if (! $model->received_at) {
+                $model->received_at = now();
+            }
+            if (auth()->check() && ! $model->created_by) {
+                $model->created_by = auth()->id();
+            }
+        });
+
+        static::updating(function (self $model) {
+            if (auth()->check()) {
+                $model->updated_by = auth()->id();
+            }
+        });
+    }
 
     protected function casts(): array
     {
         return [
-            'purchase_cost' => 'decimal:2',
-            'selling_price' => 'decimal:2',
-            'quantity_received' => 'decimal:2',
-            'quantity_remaining' => 'decimal:2',
+            'purchase_cost' => 'decimal:4',
+            'selling_price' => 'decimal:4',
+            'quantity_received' => 'decimal:4',
+            'quantity_remaining' => 'decimal:4',
             'manufacture_date' => 'date',
             'expiry_date' => 'date',
+            'received_at' => 'datetime',
         ];
     }
 
@@ -57,6 +81,21 @@ class ItemBatch extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(Transaction::class);
+    }
+
+    public function receiptTransaction(): BelongsTo
+    {
+        return $this->belongsTo(Transaction::class, 'transaction_id');
+    }
+
+    public function batchAllocations(): HasMany
+    {
+        return $this->hasMany(TransactionBatchItem::class, 'item_batch_id');
+    }
+
+    public function movements(): HasMany
+    {
+        return $this->hasMany(InventoryMovement::class, 'item_batch_id');
     }
 
     public function isExpired(): bool

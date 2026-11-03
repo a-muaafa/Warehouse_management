@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Authenticates external API requests via Sanctum personal access tokens,
@@ -13,14 +14,18 @@ use Laravel\Sanctum\PersonalAccessToken;
  */
 class AuthApiToken
 {
-    public function handle(Request $request, Closure $next): JsonResponse|\Symfony\Component\HttpFoundation\Response
+    public function handle(Request $request, Closure $next): JsonResponse|Response
     {
         $providedToken = $this->extractBearerToken($request);
 
         if (! $providedToken) {
             return response()->json([
-                'status' => 'error',
+                'success' => false,
+                'success' => false,
+                'status'  => 'error',
                 'message' => 'API authentication required. Provide a Bearer token.',
+                'data' => null,
+                'data'    => null,
             ], 401);
         }
 
@@ -29,16 +34,24 @@ class AuthApiToken
         if ($pat) {
             if ($pat->expires_at && $pat->expires_at->isPast()) {
                 return response()->json([
-                    'status' => 'error',
+                    'success' => false,
+                    'success' => false,
+                    'status'  => 'error',
                     'message' => 'API token has expired.',
+                    'data' => null,
+                    'data'    => null,
                 ], 401);
             }
 
             $user = $pat->tokenable;
             if ($user && ! $user->is_active) {
                 return response()->json([
-                    'status' => 'error',
+                    'success' => false,
+                    'success' => false,
+                    'status'  => 'error',
                     'message' => 'User account is deactivated.',
+                    'data' => null,
+                    'data'    => null,
                 ], 403);
             }
 
@@ -70,8 +83,12 @@ class AuthApiToken
 
         if (! $matchedToken) {
             return response()->json([
-                'status' => 'error',
+                'success' => false,
+                'success' => false,
+                'status'  => 'error',
                 'message' => 'Invalid or revoked API token.',
+                'data' => null,
+                'data'    => null,
             ], 401);
         }
 

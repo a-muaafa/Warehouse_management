@@ -6,10 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class InventoryAudit extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'audit_number',
@@ -18,16 +19,20 @@ class InventoryAudit extends Model
         'title',
         'type',
         'status',
+        'freeze_movements',
         'audited_by',
         'approved_by',
         'started_at',
         'reconciled_at',
         'notes',
+        'created_by',
+        'updated_by',
     ];
 
     protected function casts(): array
     {
         return [
+            'freeze_movements' => 'boolean',
             'started_at' => 'datetime',
             'reconciled_at' => 'datetime',
         ];

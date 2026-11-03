@@ -7,6 +7,7 @@ use App\Models\ActivityLog;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\View\View;
 
@@ -14,11 +15,15 @@ class WorkerController extends Controller
 {
     public function index(Request $request): View
     {
+        Gate::authorize('users.manage');
+
+        \Illuminate\Support\Facades\Gate::authorize('users.manage');
+
         $user = $request->user();
 
-        $query = User::where('role', 'worker');
+        $query = User::whereIn('role', ['worker', 'storekeeper', 'stock_counter', 'viewer']);
 
-        if (! $user->isAdmin()) {
+        if (! $user->isSuperAdmin()) {
             $query->where('department_id', $user->department_id);
         }
 
@@ -29,37 +34,48 @@ class WorkerController extends Controller
 
     public function create(): View
     {
+        Gate::authorize('users.manage');
+
+        \Illuminate\Support\Facades\Gate::authorize('users.manage');
+
         return view('supervisor.workers.create');
     }
 
     public function store(Request $request): RedirectResponse
     {
+        Gate::authorize('users.manage');
+
+        \Illuminate\Support\Facades\Gate::authorize('users.manage');
+
         $user = $request->user();
 
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'username' => ['required', 'string', 'max:255', 'unique:users,username'],
-            'email' => ['nullable', 'email', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:6'],
+            'name'        => ['required', 'string', 'max:255'],
+            'username'    => ['required', 'string', 'max:255', 'unique:users,username'],
+            'email'       => ['nullable', 'email', 'unique:users,email'],
+            'password'    => ['required', 'string', 'min:6'],
             'worker_type' => ['required', 'in:intake,auditor,view_only'],
-            'is_active' => ['nullable', 'boolean'],
+            'is_active'   => ['nullable', 'boolean'],
         ]);
 
         $worker = User::create([
-            'name' => $validated['name'],
-            'username' => $validated['username'],
-            'email' => $validated['email'] ?? null,
-            'password' => Hash::make($validated['password']),
-            'role' => 'worker',
-            'worker_type' => $validated['worker_type'],
+            'name'          => $validated['name'],
+            'username'      => $validated['username'],
+            'email'         => $validated['email'] ?? null,
+            'password'      => Hash::make($validated['password']),
+            'role'          => 'worker',
+            'worker_type'   => $validated['worker_type'],
             'department_id' => $user->department_id,
-            'is_active' => $request->boolean('is_active', true),
+            'is_active'     => $request->boolean('is_active', true),
         ]);
 
         ActivityLog::log(
             'إضافة عامل',
             "تم إنشاء حساب عامل جديد ({$worker->worker_type_display_name}): {$worker->name} ({$worker->username})",
-            $worker->department_id
+            $worker->department_id,
+            $worker,
+            null,
+            ['username' => $worker->username, 'role' => $worker->role, 'worker_type' => $worker->worker_type]
         );
 
         return redirect()->route('supervisor.workers.index')->with('success', __('تم إنشاء حساب العامل وتعيين صلاحياته بنجاح.'));

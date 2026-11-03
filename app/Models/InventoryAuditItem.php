@@ -20,14 +20,18 @@ class InventoryAuditItem extends Model
         'unit_cost',
         'discrepancy_value',
         'status',
+        'discrepancy_reason',
         'reconciliation_notes',
     ];
 
     protected function casts(): array
     {
         return [
-            'unit_cost' => 'decimal:2',
-            'discrepancy_value' => 'decimal:2',
+            'book_quantity' => 'decimal:4',
+            'counted_quantity' => 'decimal:4',
+            'discrepancy_quantity' => 'decimal:4',
+            'unit_cost' => 'decimal:4',
+            'discrepancy_value' => 'decimal:4',
         ];
     }
 

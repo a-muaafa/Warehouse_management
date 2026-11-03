@@ -3,7 +3,6 @@
 use App\Http\Controllers\Admin\DepartmentController;
 use App\Http\Controllers\Admin\SupervisorController;
 use App\Http\Controllers\Admin\SystemLogController;
-use App\Http\Controllers\Api\v1\InventoryApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BatchController;
 use App\Http\Controllers\CustomerController;
@@ -51,7 +50,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/scanner/lookup', [ScannerController::class, 'lookup'])->name('scanner.lookup');
 
     // Transactions (Inbound, Outbound, Returns, Damages)
-    Route::middleware('role:admin,warehouse_manager,supervisor,worker,auditor')->group(function () {
+    Route::middleware('role:admin,super_admin,warehouse_manager,inventory_manager,supervisor,storekeeper,stock_counter,worker,auditor,viewer')->group(function () {
         Route::get('/transactions', [TransactionController::class, 'index'])->name('transactions.index');
         Route::post('/transactions', [TransactionController::class, 'store'])->name('transactions.store');
     });
@@ -61,8 +60,10 @@ Route::middleware('auth')->group(function () {
 
     // Inter-Warehouse Transfers
     Route::resource('transfers', WarehouseTransferController::class)->except(['edit', 'update', 'destroy']);
+    Route::post('/transfers/{transfer}/approve', [WarehouseTransferController::class, 'approveTransfer'])->name('transfers.approve');
     Route::post('/transfers/{transfer}/dispatch', [WarehouseTransferController::class, 'dispatchTransfer'])->name('transfers.dispatch');
     Route::post('/transfers/{transfer}/receive', [WarehouseTransferController::class, 'receiveTransfer'])->name('transfers.receive');
+    Route::post('/transfers/{transfer}/resolve', [WarehouseTransferController::class, 'resolveDiscrepancy'])->name('transfers.resolve');
 
     // Inventory Audits & Cycle Counts
     Route::resource('audits', InventoryAuditController::class)->except(['edit', 'update', 'destroy']);
@@ -82,42 +83,27 @@ Route::middleware('auth')->group(function () {
     Route::resource('categories', ItemCategoryController::class);
 
     // Admin routes
-    Route::middleware('role:admin,warehouse_manager')->prefix('admin')->name('admin.')->group(function () {
-        Route::resource('departments', DepartmentController::class)->except(['show']);
-        Route::resource('supervisors', SupervisorController::class)->except(['show']);
+    Route::middleware('role:admin,super_admin,warehouse_manager,auditor')->prefix('admin')->name('admin.')->group(function () {
+        Route::middleware('role:admin,super_admin,warehouse_manager')->group(function () {
+            Route::resource('departments', DepartmentController::class)->except(['show']);
+            Route::resource('supervisors', SupervisorController::class)->except(['show']);
+        });
         Route::get('/logs', [SystemLogController::class, 'index'])->name('logs.index');
     });
 
     // Supervisor & Inventory Manager routes
-    Route::middleware('role:admin,warehouse_manager,supervisor')->prefix('supervisor')->name('supervisor.')->group(function () {
-        Route::resource('items', ItemController::class)->except(['show']);
-        Route::resource('workers', WorkerController::class)->except(['show']);
+    Route::middleware('role:admin,super_admin,warehouse_manager,inventory_manager,supervisor,auditor')->prefix('supervisor')->name('supervisor.')->group(function () {
+        Route::middleware('role:admin,super_admin,warehouse_manager,inventory_manager,supervisor')->group(function () {
+            Route::resource('items', ItemController::class)->except(['show']);
+            Route::resource('workers', WorkerController::class)->except(['show']);
+        });
         Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
         Route::get('/reports/export', [ReportController::class, 'exportExcel'])->name('reports.export');
     });
 
     // Worker & Label Printing routes
-    Route::middleware('role:admin,warehouse_manager,supervisor,worker')->prefix('worker')->name('worker.')->group(function () {
+    Route::middleware('role:admin,super_admin,warehouse_manager,inventory_manager,supervisor,storekeeper,stock_counter,worker')->prefix('worker')->name('worker.')->group(function () {
         Route::get('/labels/search', [LabelController::class, 'search'])->name('labels.search');
         Route::get('/labels/{item}/print', [LabelController::class, 'print'])->name('labels.print');
-    });
-});
-
-// REST API Integration routes for ERP / Accounting / Third-party systems
-// All API routes require a valid API token via the 'auth.api_token' middleware.
-// Read-only endpoints (stock-balances, barcode lookup, valuation) use 'api.read' scope.
-// The external-sync (write) endpoint requires the 'api.write' scope to prevent
-// read-only integrations from creating transactions.
-Route::prefix('api/v1')->name('api.v1.')->middleware('auth.api_token')->group(function () {
-    // Read-only endpoints
-    Route::middleware('api.scope:read')->group(function () {
-        Route::get('/stock-balances', [InventoryApiController::class, 'stockBalances'])->name('stock-balances');
-        Route::get('/items/barcode/{code}', [InventoryApiController::class, 'findByBarcode'])->name('items.barcode');
-        Route::get('/valuation-summary', [InventoryApiController::class, 'valuationSummary'])->name('valuation-summary');
-    });
-
-    // Write endpoints — requires explicit 'write' scope
-    Route::middleware('api.scope:write')->group(function () {
-        Route::post('/transactions/external-sync', [InventoryApiController::class, 'recordExternalTransaction'])->name('transactions.external-sync');
     });
 });

@@ -5,12 +5,15 @@ namespace App\Http\Controllers;
 use App\Models\Unit;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class UnitController extends Controller
 {
     public function index(): View
     {
+        Gate::authorize('master_data.view');
+
         $units = Unit::with('baseUnit')->withCount('items')->latest()->paginate(15);
 
         return view('units.index', compact('units'));
@@ -18,6 +21,8 @@ class UnitController extends Controller
 
     public function create(): View
     {
+        Gate::authorize('master_data.manage');
+
         $baseUnits = Unit::whereNull('base_unit_id')->get();
 
         return view('units.create', compact('baseUnits'));
@@ -25,6 +30,8 @@ class UnitController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        Gate::authorize('master_data.manage');
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:units,code',
@@ -43,6 +50,8 @@ class UnitController extends Controller
 
     public function edit(Unit $unit): View
     {
+        Gate::authorize('master_data.manage');
+
         $baseUnits = Unit::whereNull('base_unit_id')->where('id', '!=', $unit->id)->get();
 
         return view('units.edit', compact('unit', 'baseUnits'));
@@ -50,6 +59,8 @@ class UnitController extends Controller
 
     public function update(Request $request, Unit $unit): RedirectResponse
     {
+        Gate::authorize('master_data.manage');
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:units,code,'.$unit->id,
@@ -58,6 +69,10 @@ class UnitController extends Controller
             'conversion_factor' => 'required|numeric|min:0.0001',
             'is_active' => 'boolean',
         ]);
+
+        if (! empty($validated['base_unit_id']) && $unit->wouldCreateCycle((int) $validated['base_unit_id'])) {
+            return back()->withErrors(['base_unit_id' => __('Cannot set a base unit that creates a circular dependency.')]);
+        }
 
         $validated['is_active'] = $request->boolean('is_active', true);
 
@@ -68,6 +83,8 @@ class UnitController extends Controller
 
     public function destroy(Unit $unit): RedirectResponse
     {
+        Gate::authorize('master_data.manage');
+
         if ($unit->items()->exists() || $unit->derivedUnits()->exists()) {
             return back()->with('error', __('Cannot delete unit that is in use by items or derived units.'));
         }

@@ -14,10 +14,14 @@
                 <h3 class="card-title">{{ __('Transfer Route & Status') }}</h3>
                 @if($transfer->status === 'completed')
                 <span class="badge badge-success">{{ __('Completed & Received') }}</span>
+                @elseif($transfer->status === 'partially_received' || $transfer->status === 'discrepancy')
+                <span class="badge badge-danger">{{ __('Discrepancy / Partial Receipt') }}</span>
                 @elseif($transfer->status === 'in_transit')
                 <span class="badge badge-warning">{{ __('In-Transit') }}</span>
+                @elseif($transfer->status === 'approved')
+                <span class="badge badge-info">{{ __('Approved - Ready to Dispatch') }}</span>
                 @else
-                <span class="badge badge-neutral">{{ __('Pending Dispatch') }}</span>
+                <span class="badge badge-neutral">{{ __('Pending Approval / Dispatch') }}</span>
                 @endif
             </div>
             <div class="card-body">
@@ -69,10 +73,22 @@
                 <h3 class="card-title">{{ __('Actions & Controls') }}</h3>
             </div>
             <div class="card-body">
-                @if($transfer->status === 'pending')
+                @if(in_array($transfer->status, ['draft', 'pending']))
+                @can('approve', $transfer)
+                <form method="POST" action="{{ route('transfers.approve', $transfer) }}" class="mb-2">
+                    @csrf
+                    <button type="submit" class="btn btn-primary w-100">{{ __('Approve Transfer') }}</button>
+                </form>
+                @endcan
                 <form method="POST" action="{{ route('transfers.dispatch', $transfer) }}">
                     @csrf
                     <p class="text-muted" style="font-size:0.9rem;">{{ __('Click below once items are physically loaded onto vehicle.') }}</p>
+                    <button type="submit" class="btn btn-warning w-100 mb-2">{{ __('Dispatch Stock (Mark In-Transit)') }}</button>
+                </form>
+                @elseif($transfer->status === 'approved')
+                <form method="POST" action="{{ route('transfers.dispatch', $transfer) }}">
+                    @csrf
+                    <p class="text-muted" style="font-size:0.9rem;">{{ __('Transfer approved. Click below once items are loaded onto vehicle.') }}</p>
                     <button type="submit" class="btn btn-warning w-100 mb-2">{{ __('Dispatch Stock (Mark In-Transit)') }}</button>
                 </form>
                 @elseif($transfer->status === 'in_transit')
@@ -81,6 +97,18 @@
                     <p class="text-muted" style="font-size:0.9rem;">{{ __('Click below once items arrive and are verified at destination warehouse.') }}</p>
                     <button type="submit" class="btn btn-success w-100 mb-2">{{ __('Confirm Receipt & Reconcile') }}</button>
                 </form>
+                @elseif(in_array($transfer->status, ['partially_received', 'discrepancy']))
+                <div class="alert alert-warning mb-2">
+                    {{ __('Partial receipt recorded with missing quantity. Authorized manager can resolve discrepancy.') }}
+                </div>
+                @can('resolve', $transfer)
+                <form method="POST" action="{{ route('transfers.resolve', $transfer) }}">
+                    @csrf
+                    <input type="hidden" name="resolution" value="write_off">
+                    <textarea name="discrepancy_notes" class="form-control mb-2" rows="2" placeholder="{{ __('Discrepancy resolution notes...') }}" required>{{ $transfer->discrepancy_notes }}</textarea>
+                    <button type="submit" class="btn btn-danger w-100">{{ __('Resolve Discrepancy & Close Transfer') }}</button>
+                </form>
+                @endcan
                 @else
                 <div class="alert alert-success" style="margin:0;">
                     {{ __('Stock transfer completed and ledger balances updated.') }}

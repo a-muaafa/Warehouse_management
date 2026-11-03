@@ -7,12 +7,15 @@ use App\Models\ActivityLog;
 use App\Models\Department;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class SystemLogController extends Controller
 {
     public function index(Request $request): View
     {
+        Gate::authorize('activity_logs.view');
+
         $query = ActivityLog::with(['user', 'department']);
 
         if ($request->filled('user_id')) {
@@ -21,6 +24,18 @@ class SystemLogController extends Controller
 
         if ($request->filled('department_id')) {
             $query->where('department_id', $request->input('department_id'));
+        }
+
+        if ($request->filled('action')) {
+            $query->where('action', $request->input('action'));
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('created_at', '>=', $request->input('date_from'));
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('created_at', '<=', $request->input('date_to'));
         }
 
         if ($request->filled('search')) {

@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Enforces API scope (capability) on individual route groups.
@@ -19,7 +20,7 @@ use Illuminate\Http\Request;
  */
 class CheckApiScope
 {
-    public function handle(Request $request, Closure $next, string $requiredScope): JsonResponse|\Symfony\Component\HttpFoundation\Response
+    public function handle(Request $request, Closure $next, string $requiredScope): JsonResponse|Response
     {
         $tokenScope = $request->attributes->get('api_scope', 'read');
 
@@ -43,8 +44,12 @@ class CheckApiScope
 
         if (! $allowed) {
             return response()->json([
-                'status' => 'error',
+                'success' => false,
+                'success' => false,
+                'status'  => 'error',
                 'message' => "This API token does not have the required '{$requiredScope}' scope.",
+                'data' => null,
+                'data'    => null,
             ], 403);
         }
 

@@ -10,6 +10,8 @@ use App\Models\ItemCategory;
 use App\Models\Unit;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
 
@@ -17,15 +19,14 @@ class ItemController extends Controller
 {
     public function index(Request $request): View
     {
+        Gate::authorize('viewAny', Item::class);
+
         $user = $request->user();
 
         $query = Item::with(['category', 'primaryUnit', 'department']);
 
-        // Department isolation for non-admin users
-        if (! $user->isAdmin()) {
-            if ($user->department_id) {
-                $query->where('department_id', $user->department_id);
-            }
+        if (! $user->isSuperAdmin() && $user->department_id) {
+            $query->where('department_id', $user->department_id);
         }
 
         $items = $query
@@ -46,15 +47,13 @@ class ItemController extends Controller
 
     public function create(Request $request): View
     {
-        $user = $request->user();
-        if ($user->isWorker()) {
-            abort(403, __('إدارة وإضافة الأصناف مقتصرة على رئيس القسم والمدير العام.'));
-        }
+        Gate::authorize('create', Item::class);
 
+        $user = $request->user();
         $categories = ItemCategory::all();
         $units = Unit::where('is_active', true)->get();
 
-        $departments = $user->isAdmin()
+        $departments = $user->isSuperAdmin()
             ? Department::all()
             : Department::where('id', $user->department_id)->get();
 
@@ -63,10 +62,9 @@ class ItemController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        Gate::authorize('create', Item::class);
+
         $user = $request->user();
-        if ($user->isWorker()) {
-            abort(403, __('إدارة وإضافة الأصناف مقتصرة على رئيس القسم والمدير العام.'));
-        }
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -77,20 +75,20 @@ class ItemController extends Controller
             'secondary_unit_id' => ['nullable', 'exists:units,id'],
             'category_id' => ['nullable', 'exists:item_categories,id'],
             'department_id' => ['nullable', 'exists:departments,id'],
-            'quantity' => ['required', 'integer', 'min:0'],
+            'quantity' => ['required', 'numeric', 'min:0'],
             'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'selling_price' => ['nullable', 'numeric', 'min:0'],
-            'valuation_method' => ['required', 'in:fifo,lifo,avg'],
-            'min_alert_level' => ['required', 'integer', 'min:0'],
-            'reorder_point' => ['nullable', 'integer', 'min:0'],
-            'safety_stock' => ['nullable', 'integer', 'min:0'],
+            'valuation_method' => ['required', 'in:fifo,lifo,fefo,avg,weighted_average'],
+            'min_alert_level' => ['required', 'numeric', 'min:0'],
+            'reorder_point' => ['nullable', 'numeric', 'min:0'],
+            'safety_stock' => ['nullable', 'numeric', 'min:0'],
             'storage_cost_rate' => ['nullable', 'numeric', 'min:0'],
             'is_perishable' => ['boolean'],
             'default_location' => ['nullable', 'string', 'max:100'],
             'description' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        if (! $user->isAdmin() && $user->department_id) {
+        if (! $user->isSuperAdmin() && $user->department_id) {
             $validated['department_id'] = $user->department_id;
         } elseif (empty($validated['department_id'])) {
             $validated['department_id'] = Department::first()?->id;
@@ -115,25 +113,28 @@ class ItemController extends Controller
 
         $item = Item::create($validated);
 
-        ActivityLog::log('إضافة صنف', "تم إنشاء صنف جديد: {$item->name} (الباركود: {$item->barcode})", $item->department_id);
+        Cache::forget('dashboard_kpis');
+
+        ActivityLog::log(
+            'إضافة صنف',
+            "تم إنشاء صنف جديد: {$item->name} (الباركود: {$item->barcode})",
+            $item->department_id,
+            $item,
+            null,
+            $item->only(['name', 'barcode', 'sku', 'quantity', 'purchase_price', 'selling_price', 'valuation_method'])
+        );
 
         return redirect()->route('supervisor.items.index')->with('success', __('تم إنشاء الصنف وإضافته لمخزون القسم بنجاح.'));
     }
 
     public function edit(Request $request, Item $item): View
     {
+        Gate::authorize('update', $item);
+
         $user = $request->user();
-        if ($user->isWorker()) {
-            abort(403, __('تعديل بيانات الأصناف مقتصر على رئيس القسم والمدير العام.'));
-        }
-
-        if (! $user->isAdmin() && $user->department_id && $item->department_id !== $user->department_id) {
-            abort(403, __('غير مسموح لك بتعديل أصناف الأقسام الأخرى.'));
-        }
-
         $categories = ItemCategory::all();
         $units = Unit::where('is_active', true)->get();
-        $departments = $user->isAdmin()
+        $departments = $user->isSuperAdmin()
             ? Department::all()
             : Department::where('id', $user->department_id)->get();
 
@@ -142,14 +143,9 @@ class ItemController extends Controller
 
     public function update(Request $request, Item $item): RedirectResponse
     {
-        $user = $request->user();
-        if ($user->isWorker()) {
-            abort(403, __('تعديل بيانات الأصناف مقتصر على رئيس القسم والمدير العام.'));
-        }
+        Gate::authorize('update', $item);
 
-        if (! $user->isAdmin() && $user->department_id && $item->department_id !== $user->department_id) {
-            abort(403, __('غير مسموح لك بتعديل أصناف الأقسام الأخرى.'));
-        }
+        $user = $request->user();
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -162,17 +158,17 @@ class ItemController extends Controller
             'department_id' => ['nullable', 'exists:departments,id'],
             'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'selling_price' => ['nullable', 'numeric', 'min:0'],
-            'valuation_method' => ['required', 'in:fifo,lifo,avg'],
-            'min_alert_level' => ['required', 'integer', 'min:0'],
-            'reorder_point' => ['nullable', 'integer', 'min:0'],
-            'safety_stock' => ['nullable', 'integer', 'min:0'],
+            'valuation_method' => ['required', 'in:fifo,lifo,fefo,avg,weighted_average'],
+            'min_alert_level' => ['required', 'numeric', 'min:0'],
+            'reorder_point' => ['nullable', 'numeric', 'min:0'],
+            'safety_stock' => ['nullable', 'numeric', 'min:0'],
             'storage_cost_rate' => ['nullable', 'numeric', 'min:0'],
             'is_perishable' => ['boolean'],
             'default_location' => ['nullable', 'string', 'max:100'],
             'description' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        if (! $user->isAdmin() && $user->department_id) {
+        if (! $user->isSuperAdmin() && $user->department_id) {
             $validated['department_id'] = $user->department_id;
         }
 
@@ -183,23 +179,27 @@ class ItemController extends Controller
 
         $validated['is_perishable'] = $request->boolean('is_perishable', false);
 
+        $oldValues = $item->only(['name', 'barcode', 'sku', 'purchase_price', 'selling_price', 'valuation_method', 'min_alert_level']);
         $item->update($validated);
+        $newValues = $item->only(['name', 'barcode', 'sku', 'purchase_price', 'selling_price', 'valuation_method', 'min_alert_level']);
 
-        ActivityLog::log('تعديل صنف', "تم تحديث بيانات الصنف: {$item->name}", $item->department_id);
+        Cache::forget('dashboard_kpis');
+
+        ActivityLog::log(
+            'تعديل صنف',
+            "تم تحديث بيانات الصنف: {$item->name}",
+            $item->department_id,
+            $item,
+            $oldValues,
+            $newValues
+        );
 
         return redirect()->route('supervisor.items.index')->with('success', __('تم تحديث بيانات الصنف بنجاح.'));
     }
 
     public function destroy(Request $request, Item $item): RedirectResponse
     {
-        $user = $request->user();
-        if ($user->isWorker()) {
-            abort(403, __('حذف الأصناف مقتصر على رئيس القسم والمدير العام.'));
-        }
-
-        if (! $user->isAdmin() && $user->department_id && $item->department_id !== $user->department_id) {
-            abort(403, __('غير مسموح لك بحذف أصناف الأقسام الأخرى.'));
-        }
+        Gate::authorize('delete', $item);
 
         if ($item->transactions()->exists() || $item->batches()->where('quantity_remaining', '>', 0)->exists()) {
             return back()->with('error', __('لا يمكن حذف صنف به حركات مسجلة أو أرصدة متبقية بالتشغيلات.'));
@@ -207,9 +207,12 @@ class ItemController extends Controller
 
         $name = $item->name;
         $deptId = $item->department_id;
+        $oldValues = $item->only(['id', 'name', 'barcode', 'sku']);
         $item->delete();
 
-        ActivityLog::log('حذف صنف', "تم حذف الصنف: {$name}", $deptId);
+        Cache::forget('dashboard_kpis');
+
+        ActivityLog::log('حذف صنف', "تم حذف الصنف: {$name}", $deptId, null, $oldValues, null);
 
         return redirect()->route('supervisor.items.index')->with('success', __('تم حذف الصنف بنجاح.'));
     }
