@@ -46,10 +46,10 @@ class CheckApiScope
             return response()->json([
                 'success' => false,
                 'success' => false,
-                'status'  => 'error',
+                'status' => 'error',
                 'message' => "This API token does not have the required '{$requiredScope}' scope.",
                 'data' => null,
-                'data'    => null,
+                'data' => null,
             ], 403);
         }
 

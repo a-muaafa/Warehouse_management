@@ -22,10 +22,10 @@ class AuthApiToken
             return response()->json([
                 'success' => false,
                 'success' => false,
-                'status'  => 'error',
+                'status' => 'error',
                 'message' => 'API authentication required. Provide a Bearer token.',
                 'data' => null,
-                'data'    => null,
+                'data' => null,
             ], 401);
         }
 
@@ -36,10 +36,10 @@ class AuthApiToken
                 return response()->json([
                     'success' => false,
                     'success' => false,
-                    'status'  => 'error',
+                    'status' => 'error',
                     'message' => 'API token has expired.',
                     'data' => null,
-                    'data'    => null,
+                    'data' => null,
                 ], 401);
             }
 
@@ -48,10 +48,10 @@ class AuthApiToken
                 return response()->json([
                     'success' => false,
                     'success' => false,
-                    'status'  => 'error',
+                    'status' => 'error',
                     'message' => 'User account is deactivated.',
                     'data' => null,
-                    'data'    => null,
+                    'data' => null,
                 ], 403);
             }
 
@@ -85,10 +85,10 @@ class AuthApiToken
             return response()->json([
                 'success' => false,
                 'success' => false,
-                'status'  => 'error',
+                'status' => 'error',
                 'message' => 'Invalid or revoked API token.',
                 'data' => null,
-                'data'    => null,
+                'data' => null,
             ], 401);
         }
 

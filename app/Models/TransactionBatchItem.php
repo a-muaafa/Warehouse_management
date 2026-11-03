@@ -37,4 +37,3 @@ class TransactionBatchItem extends Model
         return $this->belongsTo(ItemBatch::class, 'item_batch_id');
     }
 }
-

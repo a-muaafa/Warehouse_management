@@ -4,8 +4,6 @@ namespace Tests\Feature;
 
 use App\Models\Department;
 use App\Models\Item;
-use App\Models\ItemBatch;
-use App\Models\Warehouse;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -23,7 +21,8 @@ class InventoryApiAuthTest extends TestCase
 {
     use RefreshDatabase;
 
-    private string $readToken  = 'test-read-token-abc123';
+    private string $readToken = 'test-read-token-abc123';
+
     private string $writeToken = 'test-write-token-xyz789';
 
     protected function setUp(): void
@@ -81,10 +80,10 @@ class InventoryApiAuthTest extends TestCase
         $item = Item::factory()->create(['barcode' => 'TEST-BC-001', 'department_id' => $dept->id]);
 
         $response = $this->withToken($this->readToken)->postJson('/api/v1/transactions/external-sync', [
-            'barcode'          => 'TEST-BC-001',
-            'type'             => 'in',
-            'quantity'         => 10,
-            'movement_reason'  => 'purchase',
+            'barcode' => 'TEST-BC-001',
+            'type' => 'in',
+            'quantity' => 10,
+            'movement_reason' => 'purchase',
         ]);
 
         $response->assertStatus(403);
@@ -113,10 +112,10 @@ class InventoryApiAuthTest extends TestCase
         $item = Item::factory()->create(['barcode' => 'TEST-IN-001', 'department_id' => $dept->id, 'quantity' => 0]);
 
         $response = $this->withToken($this->writeToken)->postJson('/api/v1/transactions/external-sync', [
-            'barcode'          => 'TEST-IN-001',
-            'type'             => 'in',
-            'quantity'         => 5,
-            'movement_reason'  => 'purchase',
+            'barcode' => 'TEST-IN-001',
+            'type' => 'in',
+            'quantity' => 5,
+            'movement_reason' => 'purchase',
         ]);
 
         $response->assertStatus(200)->assertJsonPath('status', 'success');
@@ -133,9 +132,9 @@ class InventoryApiAuthTest extends TestCase
         Item::factory()->create(['barcode' => 'TEST-NO-USER', 'department_id' => $dept->id, 'quantity' => 0]);
 
         $this->withToken($this->writeToken)->postJson('/api/v1/transactions/external-sync', [
-            'barcode'         => 'TEST-NO-USER',
-            'type'            => 'in',
-            'quantity'        => 3,
+            'barcode' => 'TEST-NO-USER',
+            'type' => 'in',
+            'quantity' => 3,
             'movement_reason' => 'erp_sync',
         ]);
 
@@ -168,9 +167,9 @@ class InventoryApiAuthTest extends TestCase
         Item::factory()->create(['barcode' => 'TEST-NO-STOCK', 'department_id' => $dept->id, 'quantity' => 0]);
 
         $response = $this->withToken($this->writeToken)->postJson('/api/v1/transactions/external-sync', [
-            'barcode'         => 'TEST-NO-STOCK',
-            'type'            => 'out',
-            'quantity'        => 50,
+            'barcode' => 'TEST-NO-STOCK',
+            'type' => 'out',
+            'quantity' => 50,
             'movement_reason' => 'sale',
         ]);
 

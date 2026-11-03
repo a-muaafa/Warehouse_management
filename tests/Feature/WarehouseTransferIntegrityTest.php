@@ -2,9 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Models\Department;
-use App\Models\Item;
-use App\Models\ItemBatch;
 use App\Models\User;
 use App\Models\Warehouse;
 use Illuminate\Foundation\Testing\RefreshDatabase;

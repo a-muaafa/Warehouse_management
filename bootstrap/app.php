@@ -23,9 +23,9 @@ return Application::configure(basePath: dirname(__DIR__))
             SecurityHeaders::class,
         ]);
         $middleware->alias([
-            'role'           => CheckRole::class,
+            'role' => CheckRole::class,
             'auth.api_token' => AuthApiToken::class,
-            'api.scope'      => CheckApiScope::class,
+            'api.scope' => CheckApiScope::class,
             'security.headers' => SecurityHeaders::class,
         ]);
     })
