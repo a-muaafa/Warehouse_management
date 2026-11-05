@@ -67,7 +67,7 @@ jobs:
           php artisan config:clear
           php artisan migrate --force
           php artisan db:seed --class=RolesAndPermissionsSeeder --force
-
+          
       - name: Run Unit Tests
         run: php artisan test --testsuite=Unit
 
