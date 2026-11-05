@@ -45,4 +45,3 @@ final readonly class ReceiveStockData
         );
     }
 }
-

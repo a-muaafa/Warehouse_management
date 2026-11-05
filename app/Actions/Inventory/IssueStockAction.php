@@ -118,4 +118,3 @@ final readonly class IssueStockAction
         return $transaction;
     }
 }
-

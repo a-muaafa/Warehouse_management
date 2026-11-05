@@ -17,4 +17,3 @@ class DemoUsersSeeder extends Seeder
         $this->call(UserSeeder::class);
     }
 }
-

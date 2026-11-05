@@ -118,4 +118,3 @@ final readonly class ReceiveStockAction
         return $transaction;
     }
 }
-
