@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -70,12 +71,23 @@ class AuthApiToken
             return $next($request);
         }
 
-        // 2. Check pre-shared config tokens (legacy fallback)
+        // 2. Check configured integration tokens (SHA-256 hashed comparison + expiration check)
         $tokens = config('api.tokens', []);
         $matchedToken = null;
+        $providedHash = hash('sha256', $providedToken);
 
         foreach ($tokens as $tokenEntry) {
-            if (hash_equals($tokenEntry['token'] ?? '', $providedToken)) {
+            $expectedHash = $tokenEntry['hash'] ?? (isset($tokenEntry['token']) ? hash('sha256', (string) $tokenEntry['token']) : '');
+            if ($expectedHash !== '' && hash_equals($expectedHash, $providedHash)) {
+                if (! empty($tokenEntry['expires_at']) && now()->gte(Carbon::parse($tokenEntry['expires_at']))) {
+                    return response()->json([
+                        'success' => false,
+                        'status' => 'error',
+                        'message' => 'API token has expired.',
+                        'data' => null,
+                    ], 401);
+                }
+
                 $matchedToken = $tokenEntry;
                 break;
             }

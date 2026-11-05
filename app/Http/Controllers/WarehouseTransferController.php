@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\Transfers\ApproveTransferAction;
 use App\Models\ActivityLog;
 use App\Models\InventoryMovement;
 use App\Models\Item;
@@ -183,29 +184,15 @@ class WarehouseTransferController extends Controller
     /**
      * Approve a draft or pending transfer before dispatch.
      */
-    public function approveTransfer(Request $request, WarehouseTransfer $transfer): RedirectResponse
+    public function approveTransfer(Request $request, WarehouseTransfer $transfer, ApproveTransferAction $approveTransfer): RedirectResponse
     {
         Gate::authorize('approve', $transfer);
 
-        if (! in_array($transfer->status, ['draft', 'pending'], true)) {
-            return back()->with('error', __('لا يمكن اعتماد التحويل في حالته الحالية.'));
+        try {
+            $approveTransfer->execute($transfer, $request->user());
+        } catch (\DomainException $e) {
+            return back()->with('error', $e->getMessage());
         }
-
-        $oldStatus = $transfer->status;
-        $transfer->update([
-            'status' => 'approved',
-            'approved_by' => $request->user()->id,
-            'approved_at' => now(),
-        ]);
-
-        ActivityLog::log(
-            'اعتماد تحويل',
-            "تم اعتماد التحويل رقم: {$transfer->transfer_number}",
-            null,
-            $transfer,
-            ['status' => $oldStatus],
-            ['status' => 'approved']
-        );
 
         return back()->with('success', __('تم اعتماد طلب التحويل بنجاح، وهو جاهز للإرسال.'));
     }

@@ -1,0 +1,18 @@
+erDiagram
+    USERS ||--o{ WAREHOUSE_USER : "assigned to"
+    WAREHOUSES ||--o{ WAREHOUSE_USER : "grants access"
+    DEPARTMENTS ||--o{ ITEMS : "categorizes"
+    UNITS ||--o{ ITEMS : "base & secondary unit"
+    ITEMS ||--o{ ITEM_BATCHES : "has batches"
+    WAREHOUSES ||--o{ ITEM_BATCHES : "stores"
+    SUPPLIERS ||--o{ ITEM_BATCHES : "supplies"
+    ITEMS ||--o{ TRANSACTIONS : "records movement"
+    TRANSACTIONS ||--o{ TRANSACTION_BATCH_ITEMS : "allocates across batches"
+    ITEM_BATCHES ||--o{ TRANSACTION_BATCH_ITEMS : "deducted/received in"
+    ITEMS ||--o{ INVENTORY_MOVEMENTS : "immutable ledger"
+    WAREHOUSES ||--o{ INVENTORY_MOVEMENTS : "warehouse ledger"
+    WAREHOUSES ||--o{ WAREHOUSE_TRANSFERS : "from / to"
+    WAREHOUSE_TRANSFERS ||--o{ TRANSFER_ITEMS : "contains"
+    WAREHOUSES ||--o{ INVENTORY_AUDITS : "audited in"
+    INVENTORY_AUDITS ||--o{ INVENTORY_AUDIT_ITEMS : "counts & reconciles"
+

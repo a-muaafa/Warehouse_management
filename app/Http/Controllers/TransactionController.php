@@ -2,30 +2,28 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\Inventory\IssueStockAction;
+use App\Actions\Inventory\ReceiveStockAction;
+use App\Data\IssueStockData;
+use App\Data\ReceiveStockData;
 use App\Models\ActivityLog;
 use App\Models\Customer;
 use App\Models\InventoryAudit;
-use App\Models\InventoryMovement;
 use App\Models\Item;
-use App\Models\ItemBatch;
-use App\Models\MovementDocument;
 use App\Models\Supplier;
 use App\Models\Transaction;
-use App\Models\TransactionBatchItem;
 use App\Models\Unit;
 use App\Models\Warehouse;
-use App\Services\InventoryValuationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\View\View;
 
 class TransactionController extends Controller
 {
     public function __construct(
-        protected InventoryValuationService $valuationService
+        protected IssueStockAction $issueStock,
+        protected ReceiveStockAction $receiveStock,
     ) {}
 
     public function index(Request $request): View
@@ -83,7 +81,6 @@ class TransactionController extends Controller
     {
         $user = $request->user();
 
-        // Validation
         $validated = $request->validate([
             'item_id' => ['required', 'integer', 'exists:items,id'],
             'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,id'],
@@ -155,164 +152,54 @@ class TransactionController extends Controller
             }
         }
 
-        // Unit price — prefer explicit input, fall back to item's catalogue price
         $unitPrice = isset($validated['unit_price']) && $validated['unit_price'] > 0
             ? (float) $validated['unit_price']
-            : ($validated['type'] === 'in' ? (float) $item->purchase_price : (float) $item->selling_price);
+            : null;
 
         try {
-            $transactionResult = DB::transaction(function () use ($validated, $item, $qty, $unitPrice, $user) {
-                $lockedItem = Item::where('id', $item->id)->lockForUpdate()->firstOrFail();
-                $qtyBefore = (float) $lockedItem->quantity;
-                $allocations = [];
-                $batchId = null;
-
-                if ($validated['type'] === 'out') {
-                    if ($qtyBefore < $qty) {
-                        throw new \DomainException(
-                            __('الكمية المتوفرة بالمخزون غير كافية. المتوفر: :qty', ['qty' => $lockedItem->quantity])
-                        );
-                    }
-
-                    $allocations = $this->valuationService->allocateOutboundStock(
-                        $lockedItem,
-                        $qty,
-                        $validated['warehouse_id'] ?? null
-                    );
-
-                    $lockedItem->decrement('quantity', $qty);
-                    // When only a single batch was used, also populate item_batch_id for convenience
-                    $batchId = count($allocations) === 1 ? $allocations[0]['batch_id'] : null;
-                } else {
-                    $batchNumber = ! empty($validated['batch_number'])
-                        ? $validated['batch_number']
-                        : 'LOT-'.date('Ymd').'-'.strtoupper(uniqid());
-
-                    $batch = ItemBatch::create([
-                        'item_id' => $lockedItem->id,
-                        'warehouse_id' => $validated['warehouse_id'] ?? null,
-                        'supplier_id' => $validated['supplier_id'] ?? null,
-                        'batch_number' => $batchNumber,
-                        'purchase_cost' => $unitPrice,
-                        'quantity_received' => $qty,
-                        'quantity_remaining' => $qty,
-                        'manufacture_date' => $validated['manufacture_date'] ?? null,
-                        'expiry_date' => $validated['expiry_date'] ?? null,
-                        'received_at' => now(),
-                        'status' => 'active',
-                    ]);
-                    $batchId = $batch->id;
-
-                    $lockedItem->increment('quantity', $qty);
-
-                    if ($unitPrice > 0) {
-                        $lockedItem->purchase_price = $unitPrice;
-                        $lockedItem->save();
-                    }
-                }
-
-                $transaction = Transaction::create([
-                    'item_id' => $lockedItem->id,
-                    'user_id' => $user->id,
-                    'warehouse_id' => $validated['warehouse_id'] ?? null,
-                    'item_batch_id' => $batchId,
-                    'supplier_id' => $validated['supplier_id'] ?? null,
-                    'customer_id' => $validated['customer_id'] ?? null,
-                    'unit_id' => $validated['unit_id'] ?? $lockedItem->unit_id,
-                    'type' => $validated['type'],
-                    'movement_reason' => $validated['movement_reason']
-                        ?? ($validated['type'] === 'in' ? 'purchase' : 'sale_delivery'),
-                    'quantity' => $qty,
-                    'unit_price' => $unitPrice,
-                    'total_amount' => round($qty * $unitPrice, 2),
-                    'reference_doc' => $validated['reference_doc'] ?? null,
-                    'idempotency_key' => $validated['idempotency_key'] ?? null,
-                    'notes' => $validated['notes'] ?? null,
-                    'status' => 'completed',
-                ]);
-
-                if ($validated['type'] === 'in' && isset($batch)) {
-                    $batch->update(['transaction_id' => $transaction->id]);
-
-                    TransactionBatchItem::create([
-                        'transaction_id' => $transaction->id,
-                        'item_batch_id' => $batch->id,
-                        'quantity' => $qty,
-                        'unit_cost' => $unitPrice,
-                        'total_cost' => round($qty * $unitPrice, 4),
-                    ]);
-
-                    InventoryMovement::record([
-                        'reference_number' => $transaction->reference_doc ?: ('TX-'.$transaction->id),
-                        'movement_type' => 'receipt',
-                        'source_type' => Transaction::class,
-                        'source_id' => $transaction->id,
-                        'item_id' => $lockedItem->id,
-                        'warehouse_id' => $validated['warehouse_id'] ?? null,
-                        'item_batch_id' => $batch->id,
-                        'quantity_before' => $qtyBefore,
-                        'quantity_change' => $qty,
-                        'quantity_after' => round($qtyBefore + $qty, 4),
-                        'unit_cost' => $unitPrice,
-                        'total_cost' => round($qty * $unitPrice, 4),
-                        'performed_by' => $user->id,
-                        'notes' => $validated['notes'] ?? 'Inbound receipt',
-                    ]);
-                } else {
-                    $runningBefore = $qtyBefore;
-                    foreach ($allocations as $alloc) {
-                        TransactionBatchItem::create([
-                            'transaction_id' => $transaction->id,
-                            'item_batch_id' => $alloc['batch_id'],
-                            'quantity' => $alloc['quantity'],
-                            'unit_cost' => $alloc['unit_cost'],
-                            'total_cost' => $alloc['total_cost'],
-                        ]);
-
-                        $runningAfter = round($runningBefore - (float) $alloc['quantity'], 4);
-                        InventoryMovement::record([
-                            'reference_number' => $transaction->reference_doc ?: ('TX-'.$transaction->id),
-                            'movement_type' => 'issue',
-                            'source_type' => Transaction::class,
-                            'source_id' => $transaction->id,
-                            'item_id' => $lockedItem->id,
-                            'warehouse_id' => $validated['warehouse_id'] ?? null,
-                            'item_batch_id' => $alloc['batch_id'],
-                            'quantity_before' => $runningBefore,
-                            'quantity_change' => -(float) $alloc['quantity'],
-                            'quantity_after' => $runningAfter,
-                            'unit_cost' => $alloc['unit_cost'],
-                            'total_cost' => $alloc['total_cost'],
-                            'performed_by' => $user->id,
-                            'notes' => $validated['notes'] ?? "Outbound issue from batch {$alloc['batch_number']}",
-                        ]);
-                        $runningBefore = $runningAfter;
-                    }
-                }
-
-                if (! empty($validated['reference_doc'])) {
-                    MovementDocument::create([
-                        'transaction_id' => $transaction->id,
-                        'document_type' => $validated['document_type']
-                            ?? ($validated['type'] === 'in' ? 'delivery_note' : 'delivery_note'),
-                        'document_number' => $validated['reference_doc'],
-                        'reference_party' => $validated['supplier_id']
-                            ? 'المورد #'.$validated['supplier_id']
-                            : ($validated['customer_id'] ? 'العميل #'.$validated['customer_id'] : null),
-                        'notes' => $validated['notes'] ?? null,
-                    ]);
-                }
-
-                return ['transaction' => $transaction, 'item' => $lockedItem, 'allocations' => $allocations];
-            });
+            if ($validated['type'] === 'in') {
+                $tx = $this->receiveStock->execute(
+                    new ReceiveStockData(
+                        itemId: $item->id,
+                        warehouseId: isset($validated['warehouse_id']) ? (int) $validated['warehouse_id'] : null,
+                        quantity: (string) $qty,
+                        reason: $validated['movement_reason'] ?? 'purchase',
+                        unitPrice: $unitPrice,
+                        supplierId: isset($validated['supplier_id']) ? (int) $validated['supplier_id'] : null,
+                        unitId: isset($validated['unit_id']) ? (int) $validated['unit_id'] : null,
+                        batchNumber: $validated['batch_number'] ?? null,
+                        manufactureDate: $validated['manufacture_date'] ?? null,
+                        expiryDate: $validated['expiry_date'] ?? null,
+                        referenceDoc: $validated['reference_doc'] ?? null,
+                        documentType: $validated['document_type'] ?? null,
+                        idempotencyKey: $validated['idempotency_key'] ?? null,
+                        notes: $validated['notes'] ?? null,
+                    ),
+                    $user
+                );
+            } else {
+                $tx = $this->issueStock->execute(
+                    new IssueStockData(
+                        itemId: $item->id,
+                        warehouseId: isset($validated['warehouse_id']) ? (int) $validated['warehouse_id'] : null,
+                        quantity: (string) $qty,
+                        reason: $validated['movement_reason'] ?? 'sale_delivery',
+                        unitPrice: $unitPrice,
+                        customerId: isset($validated['customer_id']) ? (int) $validated['customer_id'] : null,
+                        unitId: isset($validated['unit_id']) ? (int) $validated['unit_id'] : null,
+                        referenceDoc: $validated['reference_doc'] ?? null,
+                        documentType: $validated['document_type'] ?? null,
+                        idempotencyKey: $validated['idempotency_key'] ?? null,
+                        notes: $validated['notes'] ?? null,
+                    ),
+                    $user
+                );
+            }
         } catch (\DomainException $e) {
             return back()->withErrors(['quantity' => $e->getMessage()]);
         }
 
-        Cache::forget('dashboard_kpis');
-
-        $item = $transactionResult['item'];
-        $tx = $transactionResult['transaction'];
+        $item = $tx->item ?? $item->fresh();
         $actionType = $validated['type'] === 'in' ? 'توثيق حركة وارد' : 'توثيق حركة منصرف';
         ActivityLog::log(
             $actionType,

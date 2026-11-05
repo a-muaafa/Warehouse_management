@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Department;
 use App\Models\Item;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -175,5 +176,66 @@ class InventoryApiAuthTest extends TestCase
 
         $response->assertStatus(422);
         $this->assertDatabaseMissing('transactions', ['movement_reason' => 'sale']);
+    }
+
+    // -----------------------------------------------------------------------
+    // Sanctum Token Expiration & Abilities + Hashed Integration Tokens
+    // -----------------------------------------------------------------------
+
+    public function test_expired_sanctum_token_returns_401(): void
+    {
+        $user = User::factory()->superAdmin()->create();
+        $expiredToken = $user->createToken('erp-expired', ['read', 'write'], now()->subMinute())->plainTextToken;
+
+        $this->withToken($expiredToken)
+            ->getJson('/api/v1/stock-balances')
+            ->assertStatus(401);
+    }
+
+    public function test_sanctum_read_only_token_returns_403_on_external_sync(): void
+    {
+        $dept = Department::create(['name' => 'Sanctum Dept']);
+        Item::factory()->create(['barcode' => 'SANC-BC-01', 'department_id' => $dept->id, 'quantity' => 10]);
+
+        $user = User::factory()->superAdmin()->create();
+        $readOnlyToken = $user->createToken('erp-read-only', ['read'], now()->addDays(90))->plainTextToken;
+
+        $this->withToken($readOnlyToken)
+            ->postJson('/api/v1/transactions/external-sync', [
+                'barcode' => 'SANC-BC-01',
+                'type' => 'in',
+                'quantity' => 5,
+                'movement_reason' => 'purchase',
+            ])
+            ->assertStatus(403);
+    }
+
+    public function test_sha256_hashed_integration_token_authenticates_and_expired_hashed_token_returns_401(): void
+    {
+        $rawSecret = 'super-secret-erp-integration-key-2026';
+        $expiredSecret = 'expired-secret-erp-key';
+
+        config(['api.tokens' => [
+            [
+                'hash' => hash('sha256', $rawSecret),
+                'scope' => 'read',
+                'name' => 'Hashed ERP Client',
+                'expires_at' => now()->addDays(30)->toDateTimeString(),
+            ],
+            [
+                'hash' => hash('sha256', $expiredSecret),
+                'scope' => 'read',
+                'name' => 'Expired Hashed Client',
+                'expires_at' => now()->subDay()->toDateTimeString(),
+            ],
+        ]]);
+
+        $this->withToken($rawSecret)
+            ->getJson('/api/v1/stock-balances')
+            ->assertStatus(200);
+
+        $this->withToken($expiredSecret)
+            ->getJson('/api/v1/stock-balances')
+            ->assertStatus(401);
     }
 }

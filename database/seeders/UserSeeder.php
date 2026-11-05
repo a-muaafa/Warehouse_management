@@ -11,6 +11,12 @@ class UserSeeder extends Seeder
 {
     public function run(): void
     {
+        if (app()->isProduction()) {
+            $this->command?->error('Demo seeder is disabled in production.');
+
+            return;
+        }
+
         $pharmaDept = Department::where('name', 'like', '%الأدوية%')->first();
         $foodDept = Department::where('name', 'like', '%التغذية%')->first() ?? Department::where('name', 'like', '%أغذية%')->first();
 
@@ -20,7 +26,7 @@ class UserSeeder extends Seeder
                 'email' => 'admin@wms.com',
                 'name' => 'المدير العام (أدمن النظام)',
                 'password' => Hash::make('password'),
-                'role' => 'admin',
+                'role' => 'super_admin',
                 'worker_type' => null,
                 'department_id' => null,
                 'is_active' => true,
@@ -30,7 +36,7 @@ class UserSeeder extends Seeder
                 'email' => 'sup.food@wms.com',
                 'name' => 'أحمد علي (رئيس قسم الأغذية)',
                 'password' => Hash::make('password'),
-                'role' => 'supervisor',
+                'role' => 'inventory_manager',
                 'worker_type' => null,
                 'department_id' => $foodDept?->id,
                 'is_active' => true,
@@ -40,7 +46,7 @@ class UserSeeder extends Seeder
                 'email' => 'sup.pharma@wms.com',
                 'name' => 'د. خالد العمري (رئيس قسم الأدوية)',
                 'password' => Hash::make('password'),
-                'role' => 'supervisor',
+                'role' => 'inventory_manager',
                 'worker_type' => null,
                 'department_id' => $pharmaDept?->id,
                 'is_active' => true,
@@ -50,7 +56,7 @@ class UserSeeder extends Seeder
                 'email' => 'worker.entry@wms.com',
                 'name' => 'محمود سالم (عامل إدخال وتوثيق - أغذية)',
                 'password' => Hash::make('password'),
-                'role' => 'worker',
+                'role' => 'storekeeper',
                 'worker_type' => 'intake',
                 'department_id' => $foodDept?->id,
                 'is_active' => true,
@@ -60,7 +66,7 @@ class UserSeeder extends Seeder
                 'email' => 'worker.audit@wms.com',
                 'name' => 'سارة عبد الله (عاملة جرد وفرز - أدوية)',
                 'password' => Hash::make('password'),
-                'role' => 'worker',
+                'role' => 'stock_counter',
                 'worker_type' => 'auditor',
                 'department_id' => $pharmaDept?->id,
                 'is_active' => true,
@@ -70,7 +76,7 @@ class UserSeeder extends Seeder
                 'email' => 'worker.view@wms.com',
                 'name' => 'يوسف الفهد (عامل مشاهد ومتابع طلبات - أغذية)',
                 'password' => Hash::make('password'),
-                'role' => 'worker',
+                'role' => 'viewer',
                 'worker_type' => 'view_only',
                 'department_id' => $foodDept?->id,
                 'is_active' => true,

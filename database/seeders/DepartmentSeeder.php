@@ -20,10 +20,11 @@ class DepartmentSeeder extends Seeder
             ],
         ];
 
-        Department::truncate();
-
         foreach ($departments as $department) {
-            Department::create($department);
+            Department::firstOrCreate(
+                ['name' => $department['name']],
+                $department
+            );
         }
     }
 }

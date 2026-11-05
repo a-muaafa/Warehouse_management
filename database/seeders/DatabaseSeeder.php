@@ -14,16 +14,21 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // Base master data safe for all environments
         $this->call([
-            DepartmentSeeder::class,
-            UnitSeeder::class,
-            CategorySeeder::class,
-            WarehouseSeeder::class,
-            PartnerSeeder::class,
-            UserSeeder::class,
-            ItemSeeder::class,
-            BatchSeeder::class,
-            TransactionSeeder::class,
+            RolesAndPermissionsSeeder::class,
         ]);
+
+        // Demo accounts and sample inventory are strictly restricted to non-production environments
+        if (app()->environment(['local', 'testing'])) {
+            $this->call([
+                WarehouseSeeder::class,
+                PartnerSeeder::class,
+                DemoUsersSeeder::class,
+                ItemSeeder::class,
+                BatchSeeder::class,
+                TransactionSeeder::class,
+            ]);
+        }
     }
 }

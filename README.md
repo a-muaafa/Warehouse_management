@@ -1,18 +1,21 @@
-<p align="center">
-  <h1 align="center">نظام إدارة المستودعات والمخزون | Enterprise Warehouse Management System (WMS)</h1>
-  <p align="center">
-    نظام إلكتروني متكامل ومؤمّن لإدارة المستودعات المتعددة، تتبع الدفعات والتشغيلات (Batches)، سجل الحركات غير القابل للتعديل (Immutable Movement Ledger)، عمليات التحويل والجرد والتسوية، مع دعم كامل للغة العربية (RTL) والماسح الضوئي وواجهة برمجة التطبيقات (REST API v1).
-  </p>
+<div align="center">
+
+**العربية** · [English](README.en.md)
+
+<h1>نظام إدارة المستودعات والمخزون | Enterprise Warehouse Management System (WMS)</h1>
+
+<p>
+  نظام إلكتروني متكامل ومؤمّن لإدارة المستودعات المتعددة، تتبع الدفعات والتشغيلات (Batches)، سجل الحركات غير القابل للتعديل على مستوى قاعدة البيانات (Append-Only Ledger Triggers)، عمليات التحويل والجرد والتسوية، مع دعم كامل للغة العربية (RTL) والماسح الضوئي وواجهة برمجة التطبيقات (REST API v1).
 </p>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Laravel-13.x-FF2D20?style=for-the-badge&logo=laravel&logoColor=white" alt="Laravel 13" />
-  <img src="https://img.shields.io/badge/PHP-8.3%2B-777BB4?style=for-the-badge&logo=php&logoColor=white" alt="PHP 8.3+" />
-  <img src="https://img.shields.io/badge/Sanctum-API_Auth-10B981?style=for-the-badge" alt="Sanctum API Auth" />
-  <img src="https://img.shields.io/badge/Tests-60_Passing-22C55E?style=for-the-badge" alt="60 Tests Passing" />
-  <img src="https://img.shields.io/badge/Language-Arabic_RTL-green?style=for-the-badge" alt="Arabic RTL" />
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" />
-</p>
+[![Laravel](https://img.shields.io/badge/Laravel-13.x-FF2D20?style=for-the-badge&logo=laravel&logoColor=white)](https://laravel.com)
+[![PHP](https://img.shields.io/badge/PHP-8.3%2B-777BB4?style=for-the-badge&logo=php&logoColor=white)](https://php.net)
+[![Sanctum](https://img.shields.io/badge/Sanctum-API_Auth-10B981?style=for-the-badge)](https://laravel.com/docs/sanctum)
+[![Tests](https://github.com/a-muaafa/Warehouse_management/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/a-muaafa/Warehouse_management/actions/workflows/tests.yml)
+[![Language](https://img.shields.io/badge/Language-Arabic_RTL-green?style=for-the-badge)](README.md)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
+
+</div>
 
 ---
 
@@ -22,9 +25,9 @@
 
 يقدم **نظام إدارة المستودعات والمخزون (WMS)** حلاً هندسياً متكاملاً يعتمد على:
 - **عزل صلاحيات المستودعات (Warehouse-Level Isolation)** عبر Policies وGates على الخادم.
-- **سجل حركات مركزي غير قابل للتعديل (Immutable Inventory Movement Ledger)** يوثق الرصيد قبل الحركة وبعدها ومصدرها والمستخدم المنفذ.
+- **سجل حركات مركزي غير قابل للتعديل (Immutable Append-Only Movement Ledger)** محمي على مستوى التطبيق ومستوى محرك قاعدة البيانات (`BEFORE UPDATE` / `BEFORE DELETE` Triggers) يوثق الرصيد قبل الحركة وبعدها ومصدرها والمستخدم المنفذ.
 - **تخصيص دقيق للدفعات (FIFO / LIFO / FEFO / Weighted Average)** مع ربط كل حركة صرف بالدفعات المستهلكة عبر جدول وسيط (`transaction_batch_items`).
-- **معالجة ذرية (Database Transactions & Row-Level Locking)** باستخدام `lockForUpdate()` لمنع السحب المتزامن والرصيد السالب وتكرار العمليات.
+- **معمارية Actions & DTOs ومعالجة ذرية (`DB::transaction` + `lockForUpdate`)** لمنع السحب المتزامن والرصيد السالب وتكرار العمليات (`idempotency_key`).
 
 ---
 
@@ -37,7 +40,7 @@
    - تتبع تاريخ الاستلام الفعلي (`received_at`)، تاريخ الإنتاج والانتهاء، تكلفة الوحدة، والكمية الأصلية والمتبقية بدقة عشرية (`decimal(15,4)`).
    - استبعاد الدفعات المنتهية الصلاحية تلقائياً عند الصرف، ودعم الحجر الصحي (Quarantine).
 3. **تقييم المخزون المحاسبي (Inventory Valuation):**
-   - التمييز الدقيق بين تقييم **FIFO**، وتقييم **Weighted Average Cost (المتوسط المرجح)**، وتقييم **Actual Batch Cost**.
+   - التمييز الدقيق بين تقييم **FIFO**، وتقييم **LIFO**، وتقييم **FEFO**، وتقييم **Weighted Average Cost (المتوسط المرجح)**، وتقييم **Actual Batch Cost**.
 4. **نظام التحويلات بين المستودعات (Inter-Warehouse Transfers):**
    - دورة حياة متكاملة: `Draft` -> `Pending` -> `Approved` -> `In Transit` -> `Partially Received / Completed / Discrepancy`.
    - تسجيل الكميات المرسلة والمستلمة والمفقودة (`missing_quantity`) وأسباب الفروقات، ومنع إغلاق التحويل بصورة عادية قبل تسوية الفروقات.
@@ -45,16 +48,17 @@
    - دعم الجرد الكامل والجزئي، مع خيار **تجميد حركات المستودع (`freeze_movements`)** أثناء الجرد الفعلي.
    - فصل مرحلة إدخال العد الفعلي (`in_progress` -> `pending_approval`) عن مرحلة اعتماد التسوية (`reconciled`) التي تنشئ حركات التسوية الآلية.
 6. **سجل التدقيق الشامل (Security & Audit Logs):**
-   - توثيق محاولات الدخول الناجحة والفاشلة، والقيم القديمة والجديدة (`old_values` / `new_values`) عند تعديل الأصناف أو العمليات، مع منع حذف السجل وحجب الحقول الحساسة.
+   - توثيق محاولات الدخول الناجحة والفاشلة، والقيم القديمة والجديدة (`old_values` / `new_values`) عند تعديل الأصناف أو العمليات، مع منع التعديل أو الحذف عبر Database Triggers وحجب الحقول الحساسة.
 
 ---
 
 ## 3. التقنيات المستخدمة (Tech Stack)
 
 - **Backend:** PHP 8.3+, Laravel 13.x, Laravel Sanctum
+- **Architecture:** Action Classes (`IssueStockAction`, `ReceiveStockAction`, `ApproveTransferAction`), Readonly DTOs (`IssueStockData`, `ReceiveStockData`), Policies & Gates
 - **Frontend:** Blade Templates (RTL Arabic), Custom CSS, JavaScript (ES6), Vite
-- **Database:** MySQL / MariaDB / PostgreSQL / SQLite
-- **Quality & CI/CD:** PHPUnit 12, Laravel Pint, Composer Audit, GitHub Actions
+- **Database:** MySQL 8.0 / MariaDB / PostgreSQL / SQLite (مع Triggers لحماية السجلات)
+- **Quality & CI/CD:** PHPUnit 12, Laravel Pint, Composer Audit, GitHub Actions (MySQL 8.0 Service Container)
 
 ---
 
@@ -66,18 +70,21 @@ flowchart TD
     Middleware["Security Middleware: Auth / CheckRole / AuthApiToken / CheckApiScope / RateLimiter / SecurityHeaders"]
     Policies["Authorization Layer: Laravel Policies & Gates + Warehouse-Level Isolation"]
     Controllers["Controllers: Transaction / WarehouseTransfer / InventoryAudit / Batch / API v1"]
+    Actions["Domain Actions & DTOs: IssueStockAction / ReceiveStockAction / ApproveTransferAction"]
     Services["Domain Services: InventoryValuationService (FIFO/LIFO/FEFO/WAC) & HoldingCostCalculatorService"]
-    DB["Database Layer (DB::transaction + lockForUpdate)"]
-    Ledger["Immutable InventoryMovement Ledger + TransactionBatchItem Pivot + ActivityLog"]
+    DB["Database Layer (DB::transaction + SELECT ... FOR UPDATE)"]
+    Ledger["Append-Only InventoryMovement Ledger + TransactionBatchItem Pivot + ActivityLog (Protected by SQL Triggers)"]
 
     Client --> Middleware --> Policies --> Controllers
-    Controllers --> Services --> DB
-    Controllers --> Ledger --> DB
+    Controllers --> Actions --> Services --> DB
+    Actions --> Ledger --> DB
 ```
 
 ---
 
 ## 5. مخطط علاقات قاعدة البيانات (ERD Diagram)
+
+ملف المخطط المستقل متوفر أيضاً في [`docs/erd.mmd`](docs/erd.mmd):
 
 ```mermaid
 erDiagram
@@ -108,10 +115,10 @@ erDiagram
 | `item_batches` | دفعات وتشغيلات المخزون | `purchase_cost`, `quantity_received`, `quantity_remaining`, `expiry_date`, `received_at`, `transaction_id` |
 | `transactions` | حركات الاستلام والصرف والتسوية | `type` (`in`/`out`)، `movement_reason`، `idempotency_key` لمنع التكرار، حماية من التعديل بعد الاكتمال |
 | `transaction_batch_items` | الجدول الوسيط بين الحركات والدفعات | يوثق الكمية والتكلفة المسحوبة من كل دفعة على حدة في عمليات الصرف المتعددة |
-| `inventory_movements` | **سجل حركات المخزون المركزي (Ledger)** | غير قابل للتعديل أو الحذف، يسجل `quantity_before`, `quantity_change`, `quantity_after`, `source_type/id` |
+| `inventory_movements` | **سجل حركات المخزون المركزي (Ledger)** | Append-Only عبر Triggers في قاعدة البيانات، يسجل `quantity_before`, `quantity_change`, `quantity_after` |
 | `warehouse_transfers` & `transfer_items` | التحويلات بين المستودعات | حالات متكاملة (`draft`, `pending`, `approved`, `in_transit`, `partially_received`, `completed`, `discrepancy`)، `missing_quantity` |
 | `inventory_audits` & `inventory_audit_items` | جلسات الجرد والتسوية | دعم `freeze_movements`، وحفظ الفروقات وأسبابها قبل اعتماد التسوية |
-| `activity_logs` | سجل التدقيق الأمني | يسجل `old_values`, `new_values`, `subject_type`, `ip_address` ومحمية ضد الحذف |
+| `activity_logs` | سجل التدقيق الأمني | Append-Only عبر Triggers في قاعدة البيانات، يسجل `old_values`, `new_values`, `subject_type`, `ip_address` |
 
 ---
 
@@ -131,14 +138,15 @@ erDiagram
 
 ---
 
-## 8. طريقة التثبيت والتشغيل المحلي
+## 8. طريقة التثبيت والتشغيل
 
 ### المتطلبات الأساسية
 - **PHP** >= 8.3
 - **Composer** >= 2.x
 - **Node.js** >= 18.x & NPM
+- **Database:** MySQL 8.0+ / PostgreSQL / SQLite
 
-### خطوات التثبيت
+### أولاً: التثبيت لبيئة التطوير المحلية (Local Development)
 
 ```bash
 # 1. استنساخ المستودع
@@ -153,7 +161,7 @@ npm install
 cp .env.example .env
 php artisan key:generate
 
-# 4. تشغيل التهجيرات والبيانات الأولية
+# 4. تشغيل التهجيرات والبيانات التجريبية (للتطوير فقط)
 php artisan migrate --seed
 
 # 5. تجميع ملفات الواجهة الأمامية وتشغيل الخادم
@@ -161,29 +169,36 @@ npm run build
 php artisan serve
 ```
 
----
+### ثانياً: التثبيت الآمن في بيئة الإنتاج (Production Deployment)
 
-## 9. إعدادات بيئة الإنتاج الآمنة (Production Security)
+> [!WARNING]
+> يُمنع تشغيل `DemoUsersSeeder` في بيئة الإنتاج تلقائياً (`APP_ENV=production`). في بيئة الإنتاج، شغّل `RolesAndPermissionsSeeder` فقط ثم أنشئ حساب المدير الأول باستخدام الأمر الآمن `php artisan wms:create-admin` (يتطلب كلمة مرور لا تقل عن 12 حرفاً).
 
-عند نشر النظام في بيئة الإنتاج، تأكد من ضبط القيم التالية في ملف `.env`:
-
-```env
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://your-domain.com
-
-SESSION_SECURE_COOKIE=true
-SESSION_HTTP_ONLY=true
-SESSION_SAME_SITE=lax
+```bash
+php artisan migrate --force
+php artisan db:seed --class=RolesAndPermissionsSeeder --force
+php artisan wms:create-admin you@company.com admin
 ```
 
-- يتم تفعيل `URL::forceScheme('https')` وترويسات الأمان (`Strict-Transport-Security`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`) تلقائياً.
+---
+
+## 9. متغيرات البيئة وإعدادات الإنتاج (Environment Variables)
+
+| المتغير | القيمة الموصى بها في الإنتاج | الوصف |
+| :--- | :--- | :--- |
+| `APP_ENV` | `production` | يعطل حسابات الـ Demo Seeder ويفعّل HSTS وHTTPS الإجباري |
+| `APP_DEBUG` | `false` | يمنع كشف تفاصيل الأخطاء الداخلية للمستخدم النهائي |
+| `DB_CONNECTION` | `mysql` | محرك قاعدة البيانات (`mysql`, `pgsql`, `sqlite`) |
+| `SESSION_SECURE_COOKIE` | `true` | يضمن إرسال الكوكيز عبر اتصال HTTPS مشفر فقط |
+| `SANCTUM_EXPIRATION` | `129600` | مدة صلاحية رموز Sanctum بالدقائق (الافتراضي: 90 يوماً) |
+| `WMS_ERP_TOKEN_HASH` | `sha256_hex_digest` | (اختياري) بصمة SHA-256 لرمز التكامل الاحتياطي بدلاً من النص الصريح |
+| `WMS_ERP_TOKEN_EXPIRES_AT` | `2026-12-31T23:59:59Z` | (اختياري) تاريخ انتهاء صلاحية رمز التكامل الاحتياطي |
 
 ---
 
-## 10. الحسابات التجريبية الافتراضية (Demo Accounts)
+## 10. الحسابات التجريبية الافتراضية (في بيئة التطوير المحلي فقط)
 
-عند تشغيل `php artisan db:seed` يتم إنشاء الحسابات التالية للتجربة المحلية (كلمة المرور لجميع الحسابات: `password`):
+عند تشغيل `php artisan migrate --seed` في بيئة `local` أو `testing`، يتم إنشاء الحسابات التالية (كلمة المرور: `password`):
 
 | اسم المستخدم (`username`) | البريد الإلكتروني | الدور الفعلي | الوصف |
 | :--- | :--- | :--- | :--- |
@@ -196,42 +211,44 @@ SESSION_SAME_SITE=lax
 
 ---
 
-## 11. توثيق واجهة برمجة التطبيقات (REST API v1 & OpenAPI)
+## 11. توثيق واجهة برمجة التطبيقات (REST API v1 & Sanctum)
 
-جميع نقاط النهاية محمية بواسطة `auth.api_token` (تقبل رموز **Laravel Sanctum** مع التحقق من الصلاحيات وانتهاء الصلاحية، أو رموز التكامل المعرفة في البيئة) ومحمية بـ Rate Limiting (`throttle:api`).
+يعتمد النظام على **Laravel Sanctum** لإصدار رموز تكامل مقيدة بالنطاقات (`abilities:read`, `abilities:write`) ولها تاريخ انتهاء صلاحية محدد (`config/sanctum.php` مضبوط على 90 يوماً)، مع دعم التحقق الآمن عبر `hash_equals` لبصمات SHA-256.
 
-توثيق **OpenAPI 3.0 / Swagger** الكامل متوفر في الملف: [`public/openapi.yaml`](public/openapi.yaml).
+### إصدار رمز تكامل لنظام ERP خارجي
+
+```php
+$erp = User::where('username', 'erp_integration')->first();
+$token = $erp->createToken('erp-sync', ['read', 'write'], now()->addDays(90));
+echo $token->plainTextToken; // يُعرض مرة واحدة فقط
+```
+
+توثيق **OpenAPI 3.0 / Swagger** الكامل متوفر في الملف: [`public/openapi.yaml`](public/openapi.yaml) وعبر المسار `/api/docs`.
 
 ### نقاط النهاية المتاحة (`/api/v1`)
-- `GET /api/v1/stock-balances` (نطاق `read`): استعراض الأرصدة مع دعم `per_page`, `warehouse_id`, `category_id`, `low_stock`, `search`, `sort_by`, `sort_dir`.
-- `GET /api/v1/items/barcode/{code}` (نطاق `read`): البحث عن صنف بالباركود أو رمز `SKU`.
-- `GET /api/v1/valuation-summary` (نطاق `read`): ملخص تقييم المخزون (`actual_batch_value`, `fifo_value`, `weighted_average_value`).
-- `POST /api/v1/transactions/external-sync` (نطاق `write`): تسجيل حركة مخزنية خارجية مع دعم `idempotency_key`.
-
-مثال للاستجابة الموحدة:
-```json
-{
-  "success": true,
-  "status": "success",
-  "message": "Transaction created successfully",
-  "data": {
-    "id": 101,
-    "type": "stock_in",
-    "warehouse_id": 1,
-    "new_balance": 150
-  }
-}
-```
+- `GET /api/v1/stock-balances` (صلاحية `read`): استعراض الأرصدة مع دعم `per_page`, `warehouse_id`, `category_id`, `low_stock`, `search`, `sort_by`, `sort_dir`.
+- `GET /api/v1/items/barcode/{code}` (صلاحية `read`): البحث عن صنف بالباركود أو رمز `SKU`.
+- `GET /api/v1/valuation-summary` (صلاحية `read`): ملخص تقييم المخزون (`actual_batch_value`, `fifo_value`, `weighted_average_value`).
+- `POST /api/v1/transactions/external-sync` (صلاحية `write`): تسجيل حركة مخزنية خارجية مع دعم `idempotency_key`.
 
 ---
 
-## 12. الاختبارات والتكامل المستمر (Testing & CI/CD)
+## 12. واجهات النظام (Screenshots & UI Highlights)
 
-يحتوي المشروع على **60 اختباراً آلياً (Unit & Feature Tests)** بأكثر من 210 تحقق (Assertions) تغطي العمليات الحسابية (FIFO / LIFO / FEFO / WAC)، تحويلات الوحدات المتسلسلة، الصلاحيات وعزل المستودعات، التحويلات الجزئية، الجرد والتسويات، وسجل الحركات غير القابل للتعديل.
+- **لوحة التحكم التنفيذية (Executive Dashboard):** مؤشرات الأداء الفورية (KPIs)، تنبيهات الحد الأدنى، الدفعات القريبة من الانتهاء، وتكلفة الاحتفاظ بالمخزون لكل مستودع.
+- **مركز الحركات المخزنية والماسح الضوئي (Scanner & Movement Hub):** دعم قارئات الباركود وطباعة ملصقات QR/Barcode الفورية عند التوريد.
+- **إدارة التحويلات والجرد (Transfers & Audits Console):** تتبع مراحل الشحن والاعتماد وتسوية العجز والفروقات.
+- **بوابة توثيق الـ API التفاعلية (`/api/docs`):** استعراض وتجربة نقاط نهاية REST API v1 مباشرة عبر مواصفات OpenAPI 3.0.
+
+---
+
+## 13. الاختبارات والتكامل المستمر (Testing & CI/CD on MySQL 8.0)
+
+يعمل خط أنابيب **GitHub Actions** ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)) على حاوية **MySQL 8.0** حقيقية لاختبار الأقفال التشاؤمية (`SELECT ... FOR UPDATE`)، قيود المفاتيح الأجنبية، وقوادح منع التعديل والحذف (`BEFORE UPDATE` / `BEFORE DELETE` Triggers) على سجلات الحركات والتدقيق.
 
 ```bash
 # تشغيل جميع الاختبارات
-php artisan test
+php artisan test --compact
 
 # فحص تنسيق الكود وفق معايير Laravel Pint
 vendor/bin/pint --test
@@ -240,11 +257,21 @@ vendor/bin/pint --test
 composer audit
 ```
 
-يعمل خط أنابيب **GitHub Actions** (`.github/workflows/tests.yml`) تلقائياً عند كل `push` أو `pull_request`.
+---
+
+## 14. خارطة الطريق المستقبلية (Roadmap)
+
+- [x] محرك تقييم الدفعات المتعدد (FIFO / LIFO / FEFO / Weighted Average)
+- [x] سجل حركات مركزي غير قابل للتعديل على مستوى قاعدة البيانات (Append-Only SQL Triggers)
+- [x] عزل المستودعات ومصفوفة الصلاحيات السباعية (7-Role RBAC & Policies)
+- [x] معمارية Actions & Readonly DTOs للعمليات المخزنية الحرجة
+- [ ] إشعارات فورية عبر WebSockets (Laravel Reverb) عند وصول الأصناف للحد الحرج
+- [ ] دعم المواقع الفرعية داخل المستودع (Aisle / Rack / Shelf / Bin Locations)
+- [ ] تطبيق جوال مخصص للماسح الضوئي يعمل دون اتصال (Offline-First PWA Scanner)
 
 ---
 
-## 13. المساهمة والترخيص (Contributing & License)
+## 15. المساهمة والترخيص (Contributing & License)
 
 نرحب بالمساهمات عبر فتح Pull Request مع التأكد من نجاح جميع الاختبارات (`php artisan test`) واجتياز فحص التنسيق (`vendor/bin/pint`).
 هذا المشروع مرخص بموجب رخصة **[MIT License](LICENSE)**.

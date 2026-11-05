@@ -4,30 +4,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | API Integration Tokens
+    | API Integration Tokens (SHA-256 Hashed Fallback)
     |--------------------------------------------------------------------------
     |
-    | Pre-shared tokens for external ERP / Accounting / third-party systems.
-    | Each entry requires:
-    |   - token: the raw secret (store in .env, never commit real tokens)
-    |   - scope: 'read'  — may only query inventory data
-    |             'write' — may also create transactions via external-sync
-    |   - name: human-readable label for auditing / logging purposes
+    | Primary authentication is handled via Laravel Sanctum personal access tokens
+    | with explicit abilities ('read', 'write') and expiration.
     |
-    | Tokens are compared using hash_equals() to prevent timing attacks.
+    | If static integration tokens are configured, store their SHA-256 hash in .env
+    | (API_TOKEN_ERP_HASH / API_TOKEN_READONLY_HASH) and compare with hash_equals().
     |
     */
 
     'tokens' => array_filter([
-        env('API_TOKEN_ERP') ? [
-            'token' => env('API_TOKEN_ERP'),
+        (env('API_TOKEN_ERP_HASH') || env('API_TOKEN_ERP')) ? [
+            'hash' => env('API_TOKEN_ERP_HASH') ?: hash('sha256', (string) env('API_TOKEN_ERP')),
             'scope' => 'write',
             'name' => 'ERP Integration',
+            'expires_at' => env('API_TOKEN_ERP_EXPIRES_AT'),
         ] : null,
-        env('API_TOKEN_READONLY') ? [
-            'token' => env('API_TOKEN_READONLY'),
+        (env('API_TOKEN_READONLY_HASH') || env('API_TOKEN_READONLY')) ? [
+            'hash' => env('API_TOKEN_READONLY_HASH') ?: hash('sha256', (string) env('API_TOKEN_READONLY')),
             'scope' => 'read',
             'name' => 'Read-Only Analytics',
+            'expires_at' => env('API_TOKEN_READONLY_EXPIRES_AT'),
         ] : null,
     ]),
 

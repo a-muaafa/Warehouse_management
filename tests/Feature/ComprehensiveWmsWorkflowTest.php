@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Actions\Inventory\IssueStockAction;
+use App\Data\IssueStockData;
 use App\Models\ActivityLog;
 use App\Models\Department;
 use App\Models\InventoryAudit;
@@ -14,7 +16,10 @@ use App\Models\TransactionBatchItem;
 use App\Models\User;
 use App\Models\Warehouse;
 use App\Models\WarehouseTransfer;
+use Database\Seeders\DemoUsersSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ComprehensiveWmsWorkflowTest extends TestCase
@@ -415,5 +420,153 @@ class ComprehensiveWmsWorkflowTest extends TestCase
         $this->actingAs($this->whManagerA);
         $this->expectException(\DomainException::class);
         $log->delete();
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. Production Seeder Guard & wms:create-admin CLI Command
+    // -------------------------------------------------------------------------
+
+    public function test_demo_seeder_is_blocked_in_production_and_create_admin_command_works(): void
+    {
+        // Clear users created in setUp
+        User::query()->forceDelete();
+        $this->assertEquals(0, User::count());
+
+        $originalEnv = app()->environment();
+        app()->detectEnvironment(fn () => 'production');
+
+        try {
+            $this->artisan('db:seed', ['--force' => true])->assertExitCode(0);
+            $this->assertEquals(0, User::count(), 'DatabaseSeeder must not seed demo users in production');
+
+            $this->artisan('db:seed', ['--class' => DemoUsersSeeder::class, '--force' => true]);
+            $this->assertEquals(0, User::count(), 'DemoUsersSeeder must abort when called directly in production');
+        } finally {
+            app()->detectEnvironment(fn () => $originalEnv);
+        }
+
+        // Reject short password (< 12 chars)
+        $this->artisan('wms:create-admin', [
+            'email' => 'short@company.com',
+            'username' => 'short_admin',
+        ])
+            ->expectsQuestion('Password (min 12 chars)', 'short123')
+            ->assertExitCode(1);
+
+        $this->assertDatabaseMissing('users', ['email' => 'short@company.com']);
+
+        // Accept strong password (>= 12 chars)
+        $this->artisan('wms:create-admin', [
+            'email' => 'chief@company.com',
+            'username' => 'chief_admin',
+        ])
+            ->expectsQuestion('Password (min 12 chars)', 'StrongPass#2026!')
+            ->assertExitCode(0);
+
+        $admin = User::where('email', 'chief@company.com')->firstOrFail();
+        $this->assertEquals('super_admin', $admin->role);
+        $this->assertTrue($admin->isSuperAdmin());
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. Database-Level Append-Only Triggers on Ledger & Activity Logs
+    // -------------------------------------------------------------------------
+
+    public function test_database_triggers_block_direct_sql_update_and_delete_on_inventory_movements_and_activity_logs(): void
+    {
+        $item = Item::factory()->create([
+            'department_id' => $this->dept->id,
+            'quantity' => 0,
+        ]);
+
+        $this->actingAs($this->storekeeperA)->post(route('transactions.store'), [
+            'item_id' => $item->id,
+            'warehouse_id' => $this->whA->id,
+            'type' => 'in',
+            'quantity' => 10,
+            'unit_price' => 50,
+        ])->assertSessionHasNoErrors();
+
+        $movement = InventoryMovement::firstOrFail();
+
+        // Bypass Eloquent events using raw Query Builder -> DB trigger must reject with QueryException
+        $updateBlocked = false;
+        try {
+            DB::table('inventory_movements')
+                ->where('id', $movement->id)
+                ->update(['quantity_after' => 0]);
+        } catch (QueryException) {
+            $updateBlocked = true;
+        }
+        $this->assertTrue($updateBlocked, 'DB trigger must prevent direct UPDATE on inventory_movements');
+
+        $deleteBlocked = false;
+        try {
+            DB::table('inventory_movements')
+                ->where('id', $movement->id)
+                ->delete();
+        } catch (QueryException) {
+            $deleteBlocked = true;
+        }
+        $this->assertTrue($deleteBlocked, 'DB trigger must prevent direct DELETE on inventory_movements');
+
+        $log = ActivityLog::firstOrFail();
+        $logDeleteBlocked = false;
+        try {
+            DB::table('activity_logs')
+                ->where('id', $log->id)
+                ->delete();
+        } catch (QueryException) {
+            $logDeleteBlocked = true;
+        }
+        $this->assertTrue($logDeleteBlocked, 'DB trigger must prevent direct DELETE on activity_logs');
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. Concurrent / Sequential Stock Issue Protection via IssueStockAction
+    // -------------------------------------------------------------------------
+
+    public function test_concurrent_outbound_attempts_cannot_overdraw_stock(): void
+    {
+        $item = Item::factory()->create([
+            'department_id' => $this->dept->id,
+            'quantity' => 10,
+            'valuation_method' => 'fifo',
+        ]);
+
+        ItemBatch::create([
+            'item_id' => $item->id,
+            'warehouse_id' => $this->whA->id,
+            'batch_number' => 'CONC-BATCH-10',
+            'purchase_cost' => 30.00,
+            'quantity_received' => 10,
+            'quantity_remaining' => 10,
+            'status' => 'active',
+        ]);
+
+        $action = app(IssueStockAction::class);
+
+        $attempt = function () use ($action, $item): string {
+            try {
+                $action->execute(
+                    new IssueStockData(
+                        itemId: $item->id,
+                        warehouseId: $this->whA->id,
+                        quantity: '8',
+                        reason: 'sale_delivery',
+                    ),
+                    $this->storekeeperA
+                );
+
+                return 'ok';
+            } catch (\DomainException) {
+                return 'insufficient';
+            }
+        };
+
+        $results = [$attempt(), $attempt()];
+
+        $this->assertEqualsCanonicalizing(['ok', 'insufficient'], $results);
+        $this->assertEquals(2.0, (float) $item->fresh()->quantity);
     }
 }
