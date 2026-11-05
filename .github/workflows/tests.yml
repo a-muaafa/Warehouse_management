@@ -56,10 +56,6 @@ jobs:
           php artisan key:generate
 
       - name: Run Database Migrations & Essential Seeders
-        run: |
-          php artisan config:clear
-          php artisan migrate --force
-          php artisan db:seed --class=RolesAndPermissionsSeeder --force
         env:
           DB_CONNECTION: mysql
           DB_HOST: 127.0.0.1
@@ -67,8 +63,11 @@ jobs:
           DB_DATABASE: wms_test
           DB_USERNAME: root
           DB_PASSWORD: secret
+        run: |
+          php artisan config:clear
+          php artisan migrate --force
+          php artisan db:seed --class=RolesAndPermissionsSeeder --force
 
-          
       - name: Run Unit Tests
         run: php artisan test --testsuite=Unit
 
